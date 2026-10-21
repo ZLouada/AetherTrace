@@ -4,6 +4,7 @@ import { serve } from '@hono/node-server';
 import { WebSocketServer, WebSocket } from 'ws';
 import { proxyRouter } from './routes/proxy.js';
 import { tracesRouter } from './routes/traces.js';
+import { controlRouter } from './routes/control.js';
 import { registerClient, unregisterClient, getClientCount, broadcastEvent } from './broadcaster.js';
 import { getDatabase } from '@aethertrace/core-schema';
 
@@ -32,6 +33,7 @@ app.get('/health', (c) => {
 // Mount Routes
 app.route('/', proxyRouter);
 app.route('/api', tracesRouter);
+app.route('/api', controlRouter);
 
 // Global Error Handler
 app.onError((err, c) => {

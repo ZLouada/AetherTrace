@@ -10,6 +10,7 @@
     "test": "turbo run test",
     "test:smoke": "tsx examples/smoke-test.ts",
     "test:e2e": "tsx examples/sdk-export-test.ts",
+    "test:phase4": "tsx examples/phase4-breakpoint-chaos-test.ts",
     "demo:sim": "tsx examples/multi-agent-sim.ts",
     "cli": "tsx packages/cli/src/bin.ts",
     "start:proxy": "pnpm --filter @aethertrace/proxy-server start",

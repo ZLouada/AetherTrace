@@ -97,6 +97,40 @@ export const ForkSpanRequestSchema = z.object({
 
 export type ForkSpanRequest = z.infer<typeof ForkSpanRequestSchema>;
 
+// --- Breakpoint & Chaos Engineering Types ---
+
+export interface BreakpointConfig {
+  enabled: boolean;
+  matchAgentNames: string[];
+  matchModels: string[];
+}
+
+export interface PendingBreakpoint {
+  spanId: string;
+  runId: string;
+  agentName: string;
+  model: string;
+  requestPayload: any;
+  createdAt: number;
+}
+
+export interface BreakpointResolution {
+  action: 'resume' | 'mock' | 'abort';
+  modifiedPayload?: any;
+  mockedResponse?: string;
+  reason?: string;
+}
+
+export interface ChaosConfig {
+  enabled: boolean;
+  latencySpikeMs: number;
+  rateLimitErrorRate: number; // 0.0 to 1.0
+  upstream500ErrorRate: number; // 0.0 to 1.0
+  malformedJsonRate: number; // 0.0 to 1.0
+}
+
+export type ChaosFaultType = 'rate_limit' | 'upstream_500' | 'latency' | 'corrupt_json';
+
 // --- WebSocket Event Schemas & Types ---
 
 export type WebSocketEventType =
@@ -107,7 +141,12 @@ export type WebSocketEventType =
   | 'CIRCUIT_BREAKER_TRIPPED'
   | 'CACHE_HIT'
   | 'CONNECTION_READY'
-  | 'PROMPT_ERROR';
+  | 'PROMPT_ERROR'
+  | 'BREAKPOINT_HIT'
+  | 'BREAKPOINT_RESOLVED'
+  | 'BREAKPOINT_CONFIG_UPDATED'
+  | 'CHAOS_INJECTED'
+  | 'CHAOS_CONFIG_UPDATED';
 
 export interface WebSocketEvent<T = any> {
   type: string;

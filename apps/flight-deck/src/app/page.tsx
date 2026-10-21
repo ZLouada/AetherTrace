@@ -5,6 +5,7 @@ import { TopBar } from '@/components/TopBar';
 import { RunSidebar } from '@/components/RunSidebar';
 import { DagCanvas } from '@/components/DagCanvas';
 import { InspectorDrawer } from '@/components/InspectorDrawer';
+import { ChaosModal } from '@/components/ChaosModal';
 import {
   fetchRuns,
   fetchRunSpans,
@@ -12,10 +13,19 @@ import {
   postChatCompletion,
   exportRun,
   importRun,
+  fetchBreakpoints,
+  updateBreakpointConfig,
+  resolveBreakpoint,
+  fetchChaosConfig,
+  updateChaosConfig,
   WS_BASE,
   type TraceRun,
   type TraceSpan,
-  type GlobalStats
+  type GlobalStats,
+  type BreakpointConfig,
+  type PendingBreakpoint,
+  type BreakpointResolution,
+  type ChaosConfig
 } from '@/lib/api';
 
 export default function FlightDeckPage() {
@@ -28,6 +38,12 @@ export default function FlightDeckPage() {
   const [isLoadingRuns, setIsLoadingRuns] = useState<boolean>(true);
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
   const [dagDirection, setDagDirection] = useState<'TB' | 'LR'>('TB');
+
+  // Phase 4: Breakpoints & Chaos State
+  const [breakpointConfig, setBreakpointConfig] = useState<BreakpointConfig | null>(null);
+  const [pendingBreakpoints, setPendingBreakpoints] = useState<PendingBreakpoint[]>([]);
+  const [chaosConfig, setChaosConfig] = useState<ChaosConfig | null>(null);
+  const [isChaosModalOpen, setIsChaosModalOpen] = useState<boolean>(false);
 
   const selectedRunIdRef = useRef<string | null>(null);
   selectedRunIdRef.current = selectedRunId;
@@ -79,10 +95,31 @@ export default function FlightDeckPage() {
     }
   }, []);
 
+  const loadBreakpoints = useCallback(async () => {
+    try {
+      const data = await fetchBreakpoints();
+      setBreakpointConfig(data.config);
+      setPendingBreakpoints(data.pending || []);
+    } catch (err) {
+      console.error('[FlightDeck] Failed to load breakpoints:', err);
+    }
+  }, []);
+
+  const loadChaosConfig = useCallback(async () => {
+    try {
+      const data = await fetchChaosConfig();
+      setChaosConfig(data.config);
+    } catch (err) {
+      console.error('[FlightDeck] Failed to load chaos config:', err);
+    }
+  }, []);
+
   useEffect(() => {
     loadRuns();
     loadStats();
-  }, [loadRuns, loadStats]);
+    loadBreakpoints();
+    loadChaosConfig();
+  }, [loadRuns, loadStats, loadBreakpoints, loadChaosConfig]);
 
   useEffect(() => {
     if (selectedRunId) {
@@ -118,10 +155,29 @@ export default function FlightDeckPage() {
             // Refresh runs list when runs or spans are created
             if (
               eventType === 'RUN_CREATED' ||
+              eventType === 'RUN_UPDATED' ||
               eventType === 'run:created' ||
-              eventType === 'CIRCUIT_BREAKER_TRIPPED'
+              eventType === 'CIRCUIT_BREAKER_TRIPPED' ||
+              eventType === 'BREAKPOINT_HIT' ||
+              eventType === 'BREAKPOINT_RESOLVED'
             ) {
               fetchRuns().then((updated) => setRuns(updated));
+              loadBreakpoints();
+            }
+
+            if (
+              eventType === 'BREAKPOINT_CONFIG_UPDATED' ||
+              eventType === 'BREAKPOINT_HIT' ||
+              eventType === 'BREAKPOINT_RESOLVED'
+            ) {
+              loadBreakpoints();
+            }
+
+            if (
+              eventType === 'CHAOS_CONFIG_UPDATED' ||
+              eventType === 'CHAOS_INJECTED'
+            ) {
+              loadChaosConfig();
             }
 
             // If event belongs to currently active run, reload spans immediately
@@ -286,6 +342,30 @@ export default function FlightDeckPage() {
     }
   };
 
+  const handleToggleBreakpoints = async () => {
+    try {
+      const newEnabled = !breakpointConfig?.enabled;
+      const res = await updateBreakpointConfig({ enabled: newEnabled });
+      setBreakpointConfig(res.config);
+    } catch (err: any) {
+      alert(`Failed to update breakpoints: ${err.message}`);
+    }
+  };
+
+  const handleSaveChaosConfig = async (newCfg: Partial<ChaosConfig>) => {
+    const res = await updateChaosConfig(newCfg);
+    setChaosConfig(res.config);
+  };
+
+  const handleResolveBreakpoint = async (spanId: string, resolution: BreakpointResolution) => {
+    await resolveBreakpoint(spanId, resolution);
+    await loadBreakpoints();
+    if (selectedRunId) {
+      await loadSpansForRun(selectedRunId);
+      await loadRuns(selectedRunId);
+    }
+  };
+
   const selectedRun = runs.find((r) => r.id === selectedRunId) || null;
 
   return (
@@ -300,6 +380,11 @@ export default function FlightDeckPage() {
         selectedRunId={selectedRunId}
         onExportTrace={handleExportTrace}
         onImportTrace={handleImportTrace}
+        breakpointConfig={breakpointConfig}
+        pendingBreakpointsCount={pendingBreakpoints.length}
+        onToggleBreakpoints={handleToggleBreakpoints}
+        chaosConfig={chaosConfig}
+        onOpenChaosModal={() => setIsChaosModalOpen(true)}
       />
 
       {/* 3-Pane Flight Deck Body */}
@@ -334,9 +419,19 @@ export default function FlightDeckPage() {
             onForkSuccess={(newRunId) => {
               loadRuns(newRunId);
             }}
+            isHeldBreakpoint={pendingBreakpoints.some((p) => p.spanId === selectedSpan.id)}
+            onResolveBreakpoint={handleResolveBreakpoint}
           />
         )}
       </div>
+
+      {/* Phase 4: Chaos Engineering Modal */}
+      <ChaosModal
+        isOpen={isChaosModalOpen}
+        onClose={() => setIsChaosModalOpen(false)}
+        config={chaosConfig}
+        onSave={handleSaveChaosConfig}
+      />
     </div>
   );
 }

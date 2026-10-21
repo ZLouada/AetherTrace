@@ -24,7 +24,7 @@
 [Quickstart](#-quickstart-in-30-seconds) •
 [Step-by-Step Guide](#-step-by-step-guide) •
 [Architecture](#-architecture--packet-lifecycle) •
-[SDKs](#-step-8-auto-context-propagation-sdks) •
+[SDKs](#-step-10-auto-context-propagation-sdks) •
 [Comparison](#-how-aethertrace-compares) •
 [Contributing](#-contributing)
 
@@ -50,6 +50,8 @@ AetherTrace is an open-source, 100% local-first telemetry workstation:
 - 🖧 **Zero-Code-Change Proxy (`:4000`):** Change `baseURL` to `localhost:4000/v1`. Works instantly with OpenAI, Anthropic, or Ollama/local models.
 - 💾 **Local-First SQLite Engine (WAL mode):** Everything lives locally in `.trace.sqlite`. Zero external database drivers. Zero cloud telemetry.
 - 🛡️ **Hardware Circuit Breakers:** Sets hard budget caps and trips instantly on duplicate prompt loops before credit cards get charged.
+- ⏸️ **Live Mid-Flight Breakpoints (Burp Suite for AI):** Pause agent calls mid-flight, hold HTTP sockets open in memory, mutate prompts/tools in real time, or inject mock responses at \$0.00 cost.
+- 🌪️ **Chaos Engineering Engine:** Inject synthetic 429 rate limits, 502 upstream crashes, latency delays, and malformed JSON syntax to pressure-test agent self-healing loops.
 - 🖥️ **Interactive Flight Deck UI (`:3000`):** Automatic top-to-bottom DAG visualization powered by `@xyflow/react` and Dagre.
 - ⏳ **Time-Travel Fork & Replay:** Edit historical prompts or models at any node in the graph, branch off, and replay ancestor nodes in **0ms at $0.00** from local cache.
 - 📦 **Portable `.trace` Bundles:** Export any run into a self-contained `.trace.json` file (the AI equivalent of a `.pcap`). Teammates can import and inspect it with one click.
@@ -69,26 +71,30 @@ AetherTrace is an open-source, 100% local-first telemetry workstation:
  ┌──────────────────────────────────────────────────────────────────────────────────┐
  │                  AETHERTRACE INTERCEPTOR PROXY (:4000)                           │
  │                                                                                  │
- │   1. Parse Headers  ──▶  2. Check Breakers  ──▶  3. Check Cache  ──▶ 4. Forward  │
- │      X-Run-Id              Budget Breaker           SHA-256 Match       Upstream │
- │      X-Agent-Name          Loop Breaker (3x)        0ms / $0.00         or Mock  │
+ │ 1. Chaos Engine  ──▶ 2. Breakers  ──▶ 3. Breakpoint Hold ──▶ 4. Cache ──▶ 5. Forward │
+ │    Fault Injection     Budget & Loop    Pause & Mutate         0ms / $0      Upstream/   │
+ │    (429/500/Corrupt)   Safety Gates     (Burp Suite Mode)      Local Hit     Mock Engine │
  └────────────────────┬───────────────────────────────────────┬─────────────────────┘
                       │                                       │ (Real-Time WS Event Bus)
                       ▼                                       ▼
   ┌────────────────────────────────────────┐       ┌────────────────────────────────┐
   │         LOCAL SQLITE (WAL MODE)        │       │      FLIGHT DECK UI (:3000)    │
   │         trace_runs & trace_spans       │       │    Interactive React Flow DAG  │
-  │         Deterministic Storage          │       │    Time-Travel Fork IDE        │
+  │         Deterministic Storage          │       │    Live Breakpoint / Chaos IDE │
   └────────────────────────────────────────┘       └────────────────────────────────┘
 ```
 
 ### Trace Packet Lifecycle (Step-by-Step):
-1. **Intercept:** The client sends a standard `/v1/chat/completions` request to `localhost:4000` with optional context headers (`X-Run-Id`, `X-Agent-Name`, `X-Parent-Span-Id`, `X-Max-Budget-USD`).
-2. **Canonical Hash:** The proxy computes `SHA-256(model + messages + tools)` to uniquely identify the prompt state.
-3. **Breaker Evaluation:** If total session spend exceeds `X-Max-Budget-USD`, or if the exact same hash was called 3 times in a row, the proxy trips with **HTTP 429**, records a `guardrail_block` span, and alerts the UI.
-4. **Replay Cache:** If `X-Replay-Mode: true` and the hash exists in SQLite, the proxy returns the cached response in **0ms at $0.00**.
-5. **Streaming / Completion:** The proxy forwards the request upstream (or simulates realistic mock latency), accumulates tokens, and computes exact USD cost via `@aethertrace/pricing-engine`.
-6. **Persistence & Broadcast:** The span is committed to `.trace.sqlite` in WAL mode, and the WebSocket broadcaster pushes the node to all connected Flight Deck clients in real time.
+1. **Intercept & Context Parsing:** The client sends a standard `/v1/chat/completions` request to `localhost:4000` with optional context headers (`X-Run-Id`, `X-Agent-Name`, `X-Parent-Span-Id`, `X-Max-Budget-USD`, `X-Breakpoint`, `X-Chaos-Inject`).
+2. **Chaos Fault Evaluation:** If `X-Chaos-Inject` is specified or probabilistic chaos rules match, the proxy immediately simulates latency, returns a synthetic HTTP 429/502, or injects corrupted JSON syntax, recording a `guardrail_block` span and alerting the UI via `CHAOS_INJECTED`.
+3. **Canonical Hash & Circuit Breakers:** The proxy computes `SHA-256(model + messages + tools)`. If spend exceeds `X-Max-Budget-USD` or the exact prompt was repeated 3x in a row, the proxy trips with **HTTP 429** and trips the circuit breaker.
+4. **Mid-Flight Breakpoint Hold (Human-in-the-Loop):** If Breakpoints are armed or `X-Breakpoint: true`, the proxy suspends the HTTP connection in-memory (`status: "paused"`), broadcasts `BREAKPOINT_HIT` to Flight Deck, and awaits operator resolution:
+   - **▶ Resume (Forward):** Operator can mutate prompt messages, system instructions, or model before releasing to upstream.
+   - **🧪 Mock ($0.00):** Operator returns an instant custom synthetic response without burning LLM tokens.
+   - **🛑 Abort:** Operator rejects the call with HTTP 403.
+5. **Replay Cache:** If `X-Replay-Mode: true` and the hash exists in SQLite, the proxy returns the cached response in **0ms at $0.00**.
+6. **Execution & Cost Accounting:** The proxy forwards the request upstream (or simulates realistic mock latency), accumulates tokens, and computes exact USD cost via `@aethertrace/pricing-engine`.
+7. **Persistence & Real-Time Broadcast:** The span is committed to `.trace.sqlite` in WAL mode, and the WebSocket broadcaster pushes the node to all connected Flight Deck clients in real time.
 
 ---
 
@@ -179,6 +185,8 @@ const response = await openai.chat.completions.create({
 | `X-Max-Budget-USD` | Hard budget cap in USD for this run. | Unlimited |
 | `X-Replay-Mode` | If `"true"`, reuses cached response on hash hit ($0.00 / 0ms). | `"false"` |
 | `X-Mock-Upstream` | If `"true"`, simulates upstream LLM for offline testing. | `"false"` |
+| `X-Breakpoint` | If `"true"`, holds the HTTP connection suspended mid-flight for operator inspection. | `"false"` |
+| `X-Chaos-Inject` | Synthetic fault injection: `'rate_limit'` (429), `'upstream_500'` (502), `'latency'`, or `'corrupt_json'`. | `null` |
 
 ---
 
@@ -242,7 +250,67 @@ Or click **"📥 Import .trace"** in Flight Deck. The exact multi-agent graph, t
 
 ---
 
-### Step 7: Run the Autonomous Multi-Agent Simulator
+### Step 7: Live Mid-Flight Breakpoints & Prompt Mutation (Burp Suite Mode)
+
+AetherTrace v0.2.0 lets you intercept agent calls mid-flight before they reach upstream LLMs:
+
+1. **Arm Breakpoints:** In the Flight Deck UI top bar, toggle **"⏸️ Breakpoints: ARMED"** (or send `X-Breakpoint: true` with any agent request).
+2. **Connection Suspended:** When an agent invokes `/v1/chat/completions`, the proxy holds the HTTP connection suspended in memory. The node pulses amber with a **`⏸️ Awaiting Human`** badge, and the run enters `paused` state.
+3. **Live Inspector Action Bar:**
+   - **▶ Resume (Forward):** Edit the system instructions, user prompt, or model parameters right in the Flight Deck editor and click **"Resume (Edited)"**. The proxy releases the request to the upstream LLM using your *mutated* payload.
+   - **🧪 Return Mock ($0.00):** Supply a synthetic completion or tool call directly in the browser and return it immediately to the waiting agent script with 0ms latency and $0.00 token cost.
+   - **🛑 Abort Call:** Immediately terminate the call with an HTTP `403 Breakpoint Rejected by Operator`.
+
+#### REST Control Endpoints:
+```bash
+# List all suspended connections awaiting human operator review
+curl http://localhost:4000/api/breakpoints
+
+# Arm or disarm global breakpoint interception
+curl -X PUT http://localhost:4000/api/breakpoints/config \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": true, "matchModels": ["gpt-4o"]}'
+
+# Resolve a held breakpoint (resume with mutated payload, mock, or abort)
+curl -X POST http://localhost:4000/api/breakpoints/:spanId/resolve \
+  -H "Content-Type: application/json" \
+  -d '{
+    "action": "resume",
+    "modifiedPayload": {
+      "model": "gpt-4o",
+      "messages": [{"role": "user", "content": "Corrected prompt instructions"}]
+    }
+  }'
+```
+
+---
+
+### Step 8: Chaos Engineering & Agent Resilience Testing
+
+Stress-test multi-agent fault recovery, retries, and fallback mechanisms without modifying agent code:
+
+1. Click **"🌪️ Chaos Mode"** in the Flight Deck top bar to configure synthetic faults:
+   - **Artificial Latency:** Inject realistic network lag (0–5000ms).
+   - **Synthetic 429 Rate Limits:** Trigger upstream quota exhaustion errors.
+   - **Synthetic 502 Bad Gateways:** Simulate LLM provider outages.
+   - **Malformed JSON Payloads:** Return unparseable JSON to verify agent parsing and self-healing loops.
+2. **Per-Request Fault Injection:** Inject faults on specific agent calls by passing the `X-Chaos-Inject` header:
+   ```typescript
+   // Force synthetic 429 Rate Limit on this specific call
+   const res = await fetch('http://localhost:4000/v1/chat/completions', {
+     method: 'POST',
+     headers: {
+       'X-Chaos-Inject': 'rate_limit',
+       'X-Agent-Name': 'ResilienceTester'
+     },
+     body: JSON.stringify({ model: 'gpt-4o', messages: [...] })
+   });
+   ```
+3. Nodes that encounter chaos faults are marked in the Flight Deck DAG with a **`🌪️ Chaos Fault`** badge and logged to SQLite as `guardrail_block` spans.
+
+---
+
+### Step 9: Run the Autonomous Multi-Agent Simulator
 
 To see all features in action without configuring an LLM app:
 
@@ -260,7 +328,7 @@ This dispatches a 5-step agent DAG:
 
 ---
 
-### Step 8: Auto-Context Propagation SDKs
+### Step 10: Auto-Context Propagation SDKs
 
 Avoid manually passing `parent_span_id` through your codebase using our native runtime context SDKs:
 
@@ -338,9 +406,10 @@ AetherTrace/
 │   ├── proxy-server/        # Hono reverse proxy (:4000), SSE streaming, circuit breaker, WebSocket bus
 │   └── flight-deck/         # Next.js 15 UI (:3000), @xyflow/react DAG visualizer, time-travel fork IDE
 ├── examples/
-│   ├── smoke-test.ts        # Phase 1 integration verification
-│   ├── multi-agent-sim.ts   # Phase 2 5-agent DAG simulation with loop breaker trip
-│   └── sdk-export-test.ts   # Phase 3 auto-context propagation & .trace export/import test
+│   ├── smoke-test.ts                   # Phase 1 integration verification
+│   ├── multi-agent-sim.ts              # Phase 2 5-agent DAG simulation with loop breaker trip
+│   ├── sdk-export-test.ts              # Phase 3 auto-context propagation & .trace export/import test
+│   └── phase4-breakpoint-chaos-test.ts # Phase 4 live mid-flight breakpoints & chaos fault injection
 ├── .github/
 │   ├── workflows/ci.yml     # Automated pnpm install, build, check-types, smoke & e2e test
 │   └── ISSUE_TEMPLATE/      # Bug reports (with .trace bundle upload) & feature requests
@@ -359,6 +428,8 @@ AetherTrace/
 | **Local-First & Offline** | **100% Local (SQLite WAL)** | ❌ Cloud / Heavy Docker | ⚠️ Cloud / Complex Self-Host | ❌ Cloud Only |
 | **Zero Cloud Dependencies** | **✅ Yes (Single file db)** | ❌ No | ❌ No (Postgres + ClickHouse) | ❌ No |
 | **Drop-in Proxy (`/v1`)** | **✅ Yes** | ❌ SDK wrappers only | ⚠️ Partial | ✅ Yes |
+| **Live Mid-Flight Breakpoints** | **✅ Yes (Pause, Mutate, Mock)** | ❌ No | ❌ No | ❌ No |
+| **Chaos Fault Injection** | **✅ Yes (429, 500, Latency, Corrupt)** | ❌ No | ❌ No | ❌ No |
 | **Time-Travel Fork & Replay** | **✅ Yes (Edit & Branch)** | ❌ Read-only replays | ❌ Read-only replays | ❌ No |
 | **Hardware Circuit Breakers**| **✅ Yes (Budget & Loop)** | ❌ No | ❌ No | ⚠️ Budget limits only |
 | **Portable `.trace` Files** | **✅ Yes (`.pcap` for AI)**| ❌ No | ❌ No | ❌ No |
@@ -382,6 +453,9 @@ pnpm test:smoke
 
 # 4. Verify TypeScript SDK context propagation, .trace export, and SQLite reimport
 pnpm test:e2e
+
+# 5. Verify live mid-flight breakpoints, prompt mutation, and chaos fault injection
+pnpm test:phase4
 ```
 
 ---

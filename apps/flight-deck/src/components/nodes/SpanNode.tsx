@@ -21,6 +21,18 @@ export const SpanNode = memo(({ data }: { data: SpanNodeData }) => {
 
   const isCacheHit = span.cache_hit === 1;
   const isBreaker = span.span_type === 'guardrail_block';
+  const isIntercepted = Boolean(
+    span.response_payload?.includes('"status":"intercepted"') ||
+    span.response_payload?.includes('"status": "intercepted"') ||
+    span.response_payload?.includes('"awaiting_human": true') ||
+    span.response_payload?.includes('"awaiting_human":true')
+  );
+  const isChaos = Boolean(
+    span.response_payload?.includes('chaos_injected') ||
+    span.response_payload?.includes('Chaos Engine') ||
+    span.response_payload?.includes('CHAOS')
+  );
+
   const agentTheme = AGENT_COLORS[span.agent_name] || {
     bg: 'bg-gray-800/50',
     text: 'text-gray-200',
@@ -32,7 +44,9 @@ export const SpanNode = memo(({ data }: { data: SpanNodeData }) => {
   try {
     if (span.response_payload) {
       const parsedRes = JSON.parse(span.response_payload);
-      if (parsedRes.choices?.[0]?.message?.content) {
+      if (parsedRes.status === 'intercepted') {
+        previewText = '⏸️ Intercepted by Breakpoint — awaiting human operator action';
+      } else if (parsedRes.choices?.[0]?.message?.content) {
         previewText = parsedRes.choices[0].message.content;
       } else if (parsedRes.error?.message) {
         previewText = `Error: ${parsedRes.error.message}`;
@@ -50,7 +64,9 @@ export const SpanNode = memo(({ data }: { data: SpanNodeData }) => {
   return (
     <div
       className={`relative w-[320px] rounded-xl border transition-all duration-200 bg-[#111827] shadow-xl overflow-hidden ${
-        isBreaker
+        isIntercepted
+          ? 'border-amber-400 ring-2 ring-amber-500/60 shadow-[0_0_25px_rgba(245,158,11,0.5)] animate-pulse'
+          : isBreaker
           ? 'border-red-500 shadow-[0_0_20px_rgba(239,68,68,0.35)] animate-pulse'
           : isSelected
           ? 'border-cyan-400 ring-2 ring-cyan-500/50 shadow-[0_0_25px_rgba(6,182,212,0.35)]'
@@ -118,14 +134,27 @@ export const SpanNode = memo(({ data }: { data: SpanNodeData }) => {
         </div>
 
         {/* Specialized High-Visibility Badges */}
-        {isCacheHit && (
+        {isIntercepted && (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold tracking-wide uppercase bg-amber-950/90 text-amber-300 border border-amber-500 shadow-[0_0_12px_rgba(245,158,11,0.5)] animate-pulse">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping inline-block" />
+            ⏸️ Awaiting Human
+          </span>
+        )}
+
+        {isChaos && (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold tracking-wide uppercase bg-purple-950 text-purple-300 border border-purple-500 shadow-[0_0_12px_rgba(168,85,247,0.4)]">
+            🌪️ Chaos Fault
+          </span>
+        )}
+
+        {isCacheHit && !isIntercepted && (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold tracking-wide uppercase bg-emerald-950/80 text-emerald-400 border border-emerald-500/50 shadow-[0_0_10px_rgba(16,185,129,0.25)]">
             <Zap className="w-3 h-3 text-emerald-400 fill-emerald-400" />
             0ms Replay
           </span>
         )}
 
-        {isBreaker && (
+        {isBreaker && !isIntercepted && !isChaos && (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold tracking-wide uppercase bg-red-950 text-red-300 border border-red-500 shadow-[0_0_12px_rgba(239,68,68,0.4)]">
             <AlertOctagon className="w-3 h-3 text-red-400 fill-red-400" />
             Breaker Tripped

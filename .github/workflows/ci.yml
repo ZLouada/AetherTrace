@@ -40,3 +40,7 @@ jobs:
 
       - name: Run Phase 3 E2E Test (SDK & .trace Bundles)
         run: pnpm test:e2e
+
+      - name: Run Phase 4 Live Breakpoint & Chaos Test
+        run: pnpm test:phase4
+

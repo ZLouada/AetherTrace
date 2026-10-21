@@ -10,9 +10,11 @@ import {
   RefreshCw,
   Loader2,
   Upload,
-  Download
+  Download,
+  PauseCircle,
+  Flame
 } from 'lucide-react';
-import type { GlobalStats } from '@/lib/api';
+import type { GlobalStats, BreakpointConfig, ChaosConfig } from '@/lib/api';
 
 interface TopBarProps {
   wsConnected: boolean;
@@ -23,6 +25,11 @@ interface TopBarProps {
   selectedRunId: string | null;
   onExportTrace: () => void;
   onImportTrace: (file: File) => void;
+  breakpointConfig: BreakpointConfig | null;
+  pendingBreakpointsCount: number;
+  onToggleBreakpoints: () => void;
+  chaosConfig: ChaosConfig | null;
+  onOpenChaosModal: () => void;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -33,7 +40,12 @@ export const TopBar: React.FC<TopBarProps> = ({
   isSimulating,
   selectedRunId,
   onExportTrace,
-  onImportTrace
+  onImportTrace,
+  breakpointConfig,
+  pendingBreakpointsCount,
+  onToggleBreakpoints,
+  chaosConfig,
+  onOpenChaosModal
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   return (
@@ -143,6 +155,39 @@ export const TopBar: React.FC<TopBarProps> = ({
         >
           <Upload className="w-3.5 h-3.5 text-cyan-400" />
           <span>Import .trace</span>
+        </button>
+
+        {/* Mid-Flight Breakpoints Toggle */}
+        <button
+          onClick={onToggleBreakpoints}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-medium border transition-all ${
+            breakpointConfig?.enabled
+              ? 'bg-amber-950/60 text-amber-300 border-amber-600 shadow-[0_0_12px_rgba(245,158,11,0.3)]'
+              : 'text-gray-400 bg-[#111827] hover:bg-gray-800 border-gray-700/80 hover:text-white'
+          }`}
+          title={breakpointConfig?.enabled ? 'Breakpoints Armed: Pausing matching calls mid-flight' : 'Breakpoints Disabled: Click to Arm'}
+        >
+          <PauseCircle className={`w-3.5 h-3.5 ${breakpointConfig?.enabled ? 'text-amber-400 animate-pulse' : 'text-gray-400'}`} />
+          <span>Breakpoints: {breakpointConfig?.enabled ? 'ARMED' : 'OFF'}</span>
+          {pendingBreakpointsCount > 0 && (
+            <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-amber-500 text-gray-950 animate-bounce">
+              {pendingBreakpointsCount} HELD
+            </span>
+          )}
+        </button>
+
+        {/* Chaos Mode Trigger */}
+        <button
+          onClick={onOpenChaosModal}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-medium border transition-all ${
+            chaosConfig?.enabled
+              ? 'bg-purple-950/60 text-purple-300 border-purple-600 shadow-[0_0_12px_rgba(168,85,247,0.35)]'
+              : 'text-gray-400 bg-[#111827] hover:bg-gray-800 border-gray-700/80 hover:text-white'
+          }`}
+          title={chaosConfig?.enabled ? 'Chaos Mode ACTIVE: Injecting latency/errors' : 'Open Chaos Engineering Harness'}
+        >
+          <Flame className={`w-3.5 h-3.5 ${chaosConfig?.enabled ? 'text-purple-400 animate-bounce' : 'text-gray-400'}`} />
+          <span>Chaos: {chaosConfig?.enabled ? 'ACTIVE' : 'CONFIG'}</span>
         </button>
 
         {/* Export .trace Button */}

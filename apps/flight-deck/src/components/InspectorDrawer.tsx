@@ -14,25 +14,38 @@ import {
   Play,
   RotateCcw,
   Loader2,
-  FileText
+  FileText,
+  PauseCircle,
+  FlaskConical,
+  Ban
 } from 'lucide-react';
-import type { TraceSpan } from '@/lib/api';
+import type { TraceSpan, BreakpointResolution } from '@/lib/api';
 import { forkSpan, postChatCompletion } from '@/lib/api';
 
 interface InspectorDrawerProps {
   span: TraceSpan | null;
   onClose: () => void;
   onForkSuccess: (newRunId: string) => void;
+  isHeldBreakpoint?: boolean;
+  onResolveBreakpoint?: (spanId: string, resolution: BreakpointResolution) => Promise<void>;
 }
 
 export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
   span,
   onClose,
-  onForkSuccess
+  onForkSuccess,
+  isHeldBreakpoint,
+  onResolveBreakpoint
 }) => {
   const [activeTab, setActiveTab] = useState<'inspector' | 'fork'>('inspector');
   const [copiedHash, setCopiedHash] = useState(false);
   const [copiedResponse, setCopiedResponse] = useState(false);
+
+  // Breakpoint Intercept State
+  const [editedPayloadJson, setEditedPayloadJson] = useState<string>('{}');
+  const [mockResponseText, setMockResponseText] = useState<string>('');
+  const [isResolving, setIsResolving] = useState<boolean>(false);
+  const [interceptError, setInterceptError] = useState<string | null>(null);
 
   // Fork IDE State
   const [forkModel, setForkModel] = useState<string>('gpt-4o');
@@ -46,6 +59,9 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
     if (!span) return;
     setForkModel(span.model || 'gpt-4o');
     setForkAgentName(span.agent_name || 'ForkedAgent');
+    setEditedPayloadJson(span.request_payload || '{}');
+    setMockResponseText('');
+    setInterceptError(null);
 
     try {
       if (span.request_payload) {
@@ -65,6 +81,14 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
   }, [span]);
 
   if (!span) return null;
+
+  const isIntercepted = Boolean(
+    isHeldBreakpoint ||
+    span.response_payload?.includes('"status":"intercepted"') ||
+    span.response_payload?.includes('"status": "intercepted"') ||
+    span.response_payload?.includes('"awaiting_human": true') ||
+    span.response_payload?.includes('"awaiting_human":true')
+  );
 
   const handleCopyHash = () => {
     navigator.clipboard.writeText(span.request_hash);
@@ -123,6 +147,58 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
       setForkJsonError(`Fork failed: ${err.message}`);
     } finally {
       setIsForking(false);
+    }
+  };
+
+  const handleResolveResume = async () => {
+    if (!onResolveBreakpoint) return;
+    setIsResolving(true);
+    setInterceptError(null);
+    try {
+      let parsedPayload: any = undefined;
+      if (editedPayloadJson.trim()) {
+        parsedPayload = JSON.parse(editedPayloadJson);
+      }
+      await onResolveBreakpoint(span.id, {
+        action: 'resume',
+        modifiedPayload: parsedPayload
+      });
+    } catch (err: any) {
+      setInterceptError(err.message || 'Failed to resume breakpoint');
+    } finally {
+      setIsResolving(false);
+    }
+  };
+
+  const handleResolveMock = async () => {
+    if (!onResolveBreakpoint) return;
+    setIsResolving(true);
+    setInterceptError(null);
+    try {
+      await onResolveBreakpoint(span.id, {
+        action: 'mock',
+        mockedResponse: mockResponseText || 'Mocked by human operator via Flight Deck'
+      });
+    } catch (err: any) {
+      setInterceptError(err.message || 'Failed to mock response');
+    } finally {
+      setIsResolving(false);
+    }
+  };
+
+  const handleResolveAbort = async () => {
+    if (!onResolveBreakpoint) return;
+    setIsResolving(true);
+    setInterceptError(null);
+    try {
+      await onResolveBreakpoint(span.id, {
+        action: 'abort',
+        reason: 'Call aborted by human operator in Flight Deck'
+      });
+    } catch (err: any) {
+      setInterceptError(err.message || 'Failed to abort breakpoint');
+    } finally {
+      setIsResolving(false);
     }
   };
 
@@ -185,6 +261,92 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
 
       {/* Drawer Content */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4 font-mono text-xs">
+        {/* Live Breakpoint Intercept Box (Visible when call is held mid-flight) */}
+        {isIntercepted && (
+          <div className="p-4 rounded-xl bg-amber-950/40 border-2 border-amber-500 shadow-[0_0_25px_rgba(245,158,11,0.25)] space-y-3 font-mono">
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-2 text-xs font-bold text-amber-300 uppercase tracking-wide">
+                <PauseCircle className="w-4 h-4 text-amber-400 animate-pulse" />
+                Live Mid-Flight Breakpoint
+              </span>
+              <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/50 uppercase font-bold animate-pulse">
+                Awaiting Human
+              </span>
+            </div>
+
+            <p className="text-[11px] text-amber-200/90 font-sans leading-relaxed">
+              This agent call is suspended mid-flight. You can mutate the prompt payload before forwarding to the LLM, mock a direct reply ($0.00 cost), or abort the call.
+            </p>
+
+            {/* Editable Request Payload */}
+            <div className="space-y-1">
+              <label className="text-[10px] text-amber-300 uppercase font-semibold flex justify-between">
+                <span>Mutate Request Payload (JSON)</span>
+                <span className="text-amber-500/80 font-normal">Edit prompt before forward</span>
+              </label>
+              <textarea
+                rows={5}
+                value={editedPayloadJson}
+                onChange={(e) => setEditedPayloadJson(e.target.value)}
+                className="w-full bg-[#080c14] border border-amber-700/60 rounded-lg p-2.5 text-[11px] text-amber-100 font-mono focus:outline-none focus:border-amber-400 resize-none leading-relaxed"
+              />
+            </div>
+
+            {/* Mock Response Input */}
+            <div className="space-y-1">
+              <label className="text-[10px] text-amber-300 uppercase font-semibold block">
+                Mock Response Override (Optional)
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. Synthetic response text returned instantly with $0.00 cost..."
+                value={mockResponseText}
+                onChange={(e) => setMockResponseText(e.target.value)}
+                className="w-full bg-[#080c14] border border-amber-700/60 rounded-lg px-2.5 py-1.5 text-[11px] text-gray-200 font-mono focus:outline-none focus:border-amber-400"
+              />
+            </div>
+
+            {interceptError && (
+              <p className="text-[11px] text-red-400 bg-red-950/60 border border-red-800 p-2 rounded">
+                {interceptError}
+              </p>
+            )}
+
+            {/* Three Action Buttons */}
+            <div className="grid grid-cols-3 gap-2 pt-1">
+              <button
+                onClick={handleResolveResume}
+                disabled={isResolving}
+                className="flex items-center justify-center gap-1.5 py-2 px-1.5 rounded-lg font-bold text-[10px] bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_0_12px_rgba(16,185,129,0.35)] transition-all active:scale-95 disabled:opacity-50"
+                title="Resume call, forwarding modified payload to upstream LLM"
+              >
+                <Play className="w-3 h-3 fill-current" />
+                <span>Resume (Edited)</span>
+              </button>
+
+              <button
+                onClick={handleResolveMock}
+                disabled={isResolving}
+                className="flex items-center justify-center gap-1.5 py-2 px-1.5 rounded-lg font-bold text-[10px] bg-cyan-600 hover:bg-cyan-500 text-white shadow-[0_0_12px_rgba(6,182,212,0.35)] transition-all active:scale-95 disabled:opacity-50"
+                title="Return mock answer immediately with $0.00 cost"
+              >
+                <FlaskConical className="w-3 h-3" />
+                <span>Return Mock ($0)</span>
+              </button>
+
+              <button
+                onClick={handleResolveAbort}
+                disabled={isResolving}
+                className="flex items-center justify-center gap-1.5 py-2 px-1.5 rounded-lg font-bold text-[10px] bg-rose-700 hover:bg-rose-600 text-white shadow-[0_0_12px_rgba(225,29,72,0.35)] transition-all active:scale-95 disabled:opacity-50"
+                title="Abort call immediately with HTTP 403"
+              >
+                <Ban className="w-3 h-3" />
+                <span>Abort (403)</span>
+              </button>
+            </div>
+          </div>
+        )}
+
         {activeTab === 'inspector' ? (
           <>
             {/* Meta Pill Grid */}

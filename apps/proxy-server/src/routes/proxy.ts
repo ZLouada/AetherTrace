@@ -14,6 +14,8 @@ import {
 import { calculateCost } from '@aethertrace/pricing-engine';
 import { checkCircuitBreakers, tripCircuitBreaker } from '../services/breaker.js';
 import { lookupReplayCache, createReplayStreamChunks } from '../services/cache.js';
+import { shouldIntercept, holdRequest } from '../services/breakpoints.js';
+import { evaluateChaos, broadcastChaosInjected } from '../services/chaos.js';
 import { broadcastEvent } from '../broadcaster.js';
 
 export const proxyRouter = new Hono();
@@ -59,6 +61,62 @@ function generateMockResponse(body: any, id: string) {
   };
 }
 
+function commitSpanAndRun(
+  db: any,
+  span: TraceSpan,
+  isUpdate: boolean,
+  totalTokens: number,
+  costUsd: number
+) {
+  if (isUpdate) {
+    db.update(trace_spans)
+      .set({
+        span_type: span.span_type,
+        model: span.model,
+        request_payload: span.request_payload,
+        response_payload: span.response_payload,
+        prompt_tokens: span.prompt_tokens,
+        completion_tokens: span.completion_tokens,
+        cost_usd: span.cost_usd,
+        latency_ms: span.latency_ms,
+        cache_hit: span.cache_hit,
+        request_hash: span.request_hash
+      })
+      .where(eq(trace_spans.id, span.id))
+      .run();
+
+    broadcastEvent({
+      type: 'SPAN_UPDATED',
+      data: span,
+      runId: span.run_id,
+      spanId: span.id
+    });
+  } else {
+    db.insert(trace_spans).values(span).run();
+
+    broadcastEvent({
+      type: 'SPAN_CREATED',
+      data: span,
+      runId: span.run_id,
+      spanId: span.id
+    });
+  }
+
+  if (totalTokens > 0 || costUsd > 0) {
+    const runs = db.select().from(trace_runs).where(eq(trace_runs.id, span.run_id)).limit(1).all();
+    if (runs.length > 0) {
+      const run = runs[0];
+      db.update(trace_runs)
+        .set({
+          total_tokens: run.total_tokens + totalTokens,
+          total_cost_usd: run.total_cost_usd + costUsd
+        })
+        .where(eq(trace_runs.id, span.run_id))
+        .run();
+    }
+  }
+}
+
 async function handleChatCompletions(c: any) {
   const startTime = Date.now();
   let rawBody: any;
@@ -78,9 +136,9 @@ async function handleChatCompletions(c: any) {
     }, 400);
   }
 
-  const reqBody = parseResult.data;
+  let reqBody = parseResult.data;
   const isStreaming = Boolean(reqBody.stream);
-  const requestHash = computeRequestHash(reqBody);
+  let requestHash = computeRequestHash(reqBody);
 
   // Extract headers
   const runId = c.req.header('x-run-id') || `run_${randomUUID()}`;
@@ -90,6 +148,10 @@ async function handleChatCompletions(c: any) {
   const maxBudgetUsd = maxBudgetHeader ? Number.parseFloat(maxBudgetHeader) : undefined;
   const isReplayMode = c.req.header('x-replay-mode') === 'true' || c.req.header('x-replay-cache') === 'true';
   const isMockUpstream = c.req.header('x-mock-upstream') === 'true' || c.req.header('x-mock-response') === 'true' || process.env.AETHERTRACE_MOCK === 'true';
+
+  // Phase 4: Breakpoint & Chaos Headers
+  const hasBreakpointHeader = c.req.header('x-breakpoint') === 'true' || c.req.header('x-breakpoint') === '1';
+  const chaosHeader = c.req.header('x-chaos-inject');
 
   const { db } = getDatabase();
 
@@ -115,7 +177,105 @@ async function handleChatCompletions(c: any) {
     });
   }
 
-  // 2. Circuit Breaker Check (breaker.ts)
+  // 2. Chaos Pre-Request Evaluation (chaos.ts)
+  let shouldCorruptJson = false;
+  const chaosEval = evaluateChaos(chaosHeader);
+  if (chaosEval.fault === 'rate_limit') {
+    const chaosSpanId = `span_${randomUUID()}`;
+    const now = Date.now();
+    const errSpan: TraceSpan = {
+      id: chaosSpanId,
+      run_id: runId,
+      parent_span_id: parentSpanId,
+      span_type: 'guardrail_block',
+      agent_name: agentName,
+      model: reqBody.model,
+      request_payload: JSON.stringify(rawBody),
+      response_payload: JSON.stringify({
+        error: 'Chaos Engine: Injected Rate Limit Error (HTTP 429)',
+        chaos_injected: 'rate_limit',
+        details: chaosEval.details
+      }),
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      cost_usd: 0.0,
+      latency_ms: Math.max(1, now - startTime),
+      cache_hit: 0,
+      request_hash: requestHash,
+      created_at: now
+    };
+
+    db.insert(trace_spans).values(errSpan).run();
+    broadcastChaosInjected(chaosSpanId, runId, 'rate_limit', chaosEval.details);
+    broadcastEvent({
+      type: 'SPAN_CREATED',
+      data: errSpan,
+      runId,
+      spanId: chaosSpanId
+    });
+
+    return c.json({
+      error: {
+        message: 'Chaos Engine: Injected Rate Limit Error (HTTP 429)',
+        type: 'chaos_rate_limit',
+        details: chaosEval.details
+      }
+    }, 429);
+  }
+
+  if (chaosEval.fault === 'upstream_500') {
+    const chaosSpanId = `span_${randomUUID()}`;
+    const now = Date.now();
+    const errSpan: TraceSpan = {
+      id: chaosSpanId,
+      run_id: runId,
+      parent_span_id: parentSpanId,
+      span_type: 'guardrail_block',
+      agent_name: agentName,
+      model: reqBody.model,
+      request_payload: JSON.stringify(rawBody),
+      response_payload: JSON.stringify({
+        error: 'Chaos Engine: Injected Upstream Failure (HTTP 502)',
+        chaos_injected: 'upstream_500',
+        details: chaosEval.details
+      }),
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      cost_usd: 0.0,
+      latency_ms: Math.max(1, now - startTime),
+      cache_hit: 0,
+      request_hash: requestHash,
+      created_at: now
+    };
+
+    db.insert(trace_spans).values(errSpan).run();
+    broadcastChaosInjected(chaosSpanId, runId, 'upstream_500', chaosEval.details);
+    broadcastEvent({
+      type: 'SPAN_CREATED',
+      data: errSpan,
+      runId,
+      spanId: chaosSpanId
+    });
+
+    return c.json({
+      error: {
+        message: 'Chaos Engine: Injected Upstream Failure (HTTP 502)',
+        type: 'chaos_upstream_failure',
+        details: chaosEval.details
+      }
+    }, 502);
+  }
+
+  if (chaosEval.fault === 'latency' && chaosEval.latencyMs) {
+    await sleep(chaosEval.latencyMs);
+    broadcastChaosInjected(runId, runId, 'latency', chaosEval.details);
+  }
+
+  if (chaosEval.fault === 'corrupt_json') {
+    shouldCorruptJson = true;
+  }
+
+  // 3. Circuit Breaker Check (breaker.ts)
   const breakerResult = await checkCircuitBreakers({
     runId,
     requestHash,
@@ -124,7 +284,6 @@ async function handleChatCompletions(c: any) {
   });
 
   if (!breakerResult.allowed) {
-    // Trips breaker: updates trace_runs.status = 'breaker_tripped', inserts 'guardrail_block' span, broadcasts WS alert
     const blockSpan = tripCircuitBreaker({
       runId,
       parentSpanId,
@@ -145,7 +304,164 @@ async function handleChatCompletions(c: any) {
     }, 429);
   }
 
-  // 3. Time-Travel Replay Cache Lookup (X-Replay-Mode: true)
+  // 4. Live Mid-Flight Breakpoint Interception Check (breakpoints.ts)
+  let spanId = `span_${randomUUID()}`;
+  let isResumedFromBreakpoint = false;
+
+  if (shouldIntercept(agentName, reqBody.model, hasBreakpointHeader)) {
+    const heldSpan: TraceSpan = {
+      id: spanId,
+      run_id: runId,
+      parent_span_id: parentSpanId,
+      span_type: 'llm_call',
+      agent_name: agentName,
+      model: reqBody.model,
+      request_payload: JSON.stringify(rawBody),
+      response_payload: JSON.stringify({ status: 'intercepted', awaiting_human: true }),
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      cost_usd: 0.0,
+      latency_ms: 0,
+      cache_hit: 0,
+      request_hash: requestHash,
+      created_at: Date.now()
+    };
+
+    db.insert(trace_spans).values(heldSpan).run();
+    db.update(trace_runs).set({ status: 'paused' }).where(eq(trace_runs.id, runId)).run();
+
+    broadcastEvent({
+      type: 'SPAN_CREATED',
+      data: heldSpan,
+      runId,
+      spanId
+    });
+
+    broadcastEvent({
+      type: 'RUN_UPDATED',
+      data: { id: runId, status: 'paused' },
+      runId
+    });
+
+    const resolution = await holdRequest(spanId, {
+      runId,
+      agentName,
+      model: reqBody.model,
+      originalPayload: rawBody
+    });
+
+    if (resolution.action === 'abort') {
+      const abortText = JSON.stringify({ error: resolution.reason || 'Breakpoint Rejected by Operator' });
+      db.update(trace_spans)
+        .set({
+          span_type: 'guardrail_block',
+          response_payload: abortText,
+          latency_ms: Math.max(1, Date.now() - startTime)
+        })
+        .where(eq(trace_spans.id, spanId))
+        .run();
+
+      db.update(trace_runs).set({ status: 'failed' }).where(eq(trace_runs.id, runId)).run();
+
+      broadcastEvent({
+        type: 'SPAN_UPDATED',
+        data: { id: spanId, span_type: 'guardrail_block', response_payload: abortText },
+        runId,
+        spanId
+      });
+
+      return c.json({
+        error: {
+          message: resolution.reason || 'Breakpoint Rejected by Operator',
+          type: 'breakpoint_rejected'
+        }
+      }, 403);
+    }
+
+    if (resolution.action === 'mock') {
+      const mockedContent = resolution.mockedResponse || '[AetherTrace Operator Mock Response]';
+      const mockCompletion = {
+        id: `chatcmpl-${spanId}`,
+        object: 'chat.completion',
+        created: Math.floor(Date.now() / 1000),
+        model: reqBody.model,
+        choices: [
+          {
+            index: 0,
+            message: { role: 'assistant', content: mockedContent },
+            finish_reason: 'stop'
+          }
+        ],
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+      };
+
+      const now = Date.now();
+      db.update(trace_spans)
+        .set({
+          response_payload: JSON.stringify(mockCompletion),
+          cost_usd: 0.0,
+          latency_ms: Math.max(1, now - startTime)
+        })
+        .where(eq(trace_spans.id, spanId))
+        .run();
+
+      db.update(trace_runs).set({ status: 'completed' }).where(eq(trace_runs.id, runId)).run();
+
+      broadcastEvent({
+        type: 'SPAN_UPDATED',
+        data: {
+          id: spanId,
+          response_payload: JSON.stringify(mockCompletion),
+          cost_usd: 0.0,
+          latency_ms: Math.max(1, now - startTime)
+        },
+        runId,
+        spanId
+      });
+
+      broadcastEvent({
+        type: 'RUN_UPDATED',
+        data: { id: runId, status: 'completed' },
+        runId
+      });
+
+      return c.json(mockCompletion, 200, {
+        'X-AetherTrace-Breakpoint': 'MOCKED',
+        'X-AetherTrace-Cost': '$0.000000',
+        'X-AetherTrace-Latency': `${Math.max(1, now - startTime)}ms`
+      });
+    }
+
+    if (resolution.action === 'resume') {
+      isResumedFromBreakpoint = true;
+      db.update(trace_runs).set({ status: 'running' }).where(eq(trace_runs.id, runId)).run();
+      broadcastEvent({
+        type: 'RUN_UPDATED',
+        data: { id: runId, status: 'running' },
+        runId
+      });
+
+      if (resolution.modifiedPayload) {
+        rawBody = resolution.modifiedPayload;
+        const reparse = ChatCompletionRequestSchema.safeParse(rawBody);
+        if (reparse.success) {
+          reqBody = reparse.data;
+        }
+        requestHash = computeRequestHash(reqBody);
+
+        db.update(trace_spans)
+          .set({
+            request_payload: JSON.stringify(rawBody),
+            model: reqBody.model,
+            request_hash: requestHash
+          })
+          .where(eq(trace_spans.id, spanId))
+          .run();
+      }
+    }
+  }
+
+  // 5. Time-Travel Replay Cache Lookup (X-Replay-Mode: true)
   if (isReplayMode) {
     const cachedSpan = lookupReplayCache(requestHash);
     if (cachedSpan && cachedSpan.response_payload) {
@@ -157,10 +473,9 @@ async function handleChatCompletions(c: any) {
       }
 
       if (cachedResponse) {
-        const replaySpanId = `span_${randomUUID()}`;
+        const replaySpanId = isResumedFromBreakpoint ? spanId : `span_${randomUUID()}`;
         const now = Date.now();
 
-        // 0ms latency, $0.00 cost, cache_hit = 1
         const replaySpan: TraceSpan = {
           id: replaySpanId,
           run_id: runId,
@@ -179,14 +494,7 @@ async function handleChatCompletions(c: any) {
           created_at: now
         };
 
-        db.insert(trace_spans).values(replaySpan).run();
-
-        broadcastEvent({
-          type: 'SPAN_CREATED',
-          data: replaySpan,
-          runId,
-          spanId: replaySpanId
-        });
+        commitSpanAndRun(db, replaySpan, isResumedFromBreakpoint, 0, 0);
 
         if (isStreaming) {
           c.header('Content-Type', 'text/event-stream');
@@ -211,13 +519,42 @@ async function handleChatCompletions(c: any) {
     }
   }
 
-  // 4. Upstream Execution (Mock or Real Upstream)
-  const spanId = `span_${randomUUID()}`;
+  // 6. Upstream Execution (Mock or Real Upstream)
   const openaiBaseUrl = c.req.header('x-target-base-url') || process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
+
+  // Check if we should inject corrupted JSON response
+  if (shouldCorruptJson) {
+    const corruptSnippet = `{"id":"chatcmpl-${spanId}","object":"chat.completion","choices":[{"index":0,"message":{"content":"[CHAOS_CORRUPT_MALFORMED_JSON]: {"unclosed_syntax": true, "tokens": `;
+    const now = Date.now();
+    const span: TraceSpan = {
+      id: spanId,
+      run_id: runId,
+      parent_span_id: parentSpanId,
+      span_type: 'guardrail_block',
+      agent_name: agentName,
+      model: reqBody.model,
+      request_payload: JSON.stringify(rawBody),
+      response_payload: corruptSnippet,
+      prompt_tokens: 15,
+      completion_tokens: 15,
+      cost_usd: 0.0,
+      latency_ms: Math.max(1, now - startTime),
+      cache_hit: 0,
+      request_hash: requestHash,
+      created_at: now
+    };
+
+    commitSpanAndRun(db, span, isResumedFromBreakpoint, 30, 0.0);
+    broadcastChaosInjected(spanId, runId, 'corrupt_json', 'Chaos Engine injected malformed JSON syntax');
+
+    return c.text(corruptSnippet, 200, {
+      'Content-Type': 'application/json',
+      'X-AetherTrace-Chaos': 'corrupt_json'
+    });
+  }
 
   // Handle Mock Upstream with 150ms delay
   if (isMockUpstream || !process.env.OPENAI_API_KEY && !c.req.header('authorization') && !c.req.header('x-target-base-url')) {
-    // Simulate realistic 150ms upstream network latency
     await sleep(150);
 
     const mockResponse = generateMockResponse(rawBody, spanId);
@@ -262,26 +599,7 @@ async function handleChatCompletions(c: any) {
           created_at: now
         };
 
-        db.insert(trace_spans).values(span).run();
-
-        const runs = db.select().from(trace_runs).where(eq(trace_runs.id, runId)).limit(1).all();
-        if (runs.length > 0) {
-          const run = runs[0];
-          db.update(trace_runs)
-            .set({
-              total_tokens: run.total_tokens + totalTokens,
-              total_cost_usd: run.total_cost_usd + costResult.totalCost
-            })
-            .where(eq(trace_runs.id, runId))
-            .run();
-        }
-
-        broadcastEvent({
-          type: 'SPAN_CREATED',
-          data: span,
-          runId,
-          spanId
-        });
+        commitSpanAndRun(db, span, isResumedFromBreakpoint, totalTokens, costResult.totalCost);
       });
     }
 
@@ -305,26 +623,7 @@ async function handleChatCompletions(c: any) {
       created_at: now
     };
 
-    db.insert(trace_spans).values(span).run();
-
-    const runs = db.select().from(trace_runs).where(eq(trace_runs.id, runId)).limit(1).all();
-    if (runs.length > 0) {
-      const run = runs[0];
-      db.update(trace_runs)
-        .set({
-          total_tokens: run.total_tokens + totalTokens,
-          total_cost_usd: run.total_cost_usd + costResult.totalCost
-        })
-        .where(eq(trace_runs.id, runId))
-        .run();
-    }
-
-    broadcastEvent({
-      type: 'SPAN_CREATED',
-      data: span,
-      runId,
-      spanId
-    });
+    commitSpanAndRun(db, span, isResumedFromBreakpoint, totalTokens, costResult.totalCost);
 
     return c.json(mockResponse, 200, {
       'X-AetherTrace-Cache': 'MISS',
@@ -333,7 +632,7 @@ async function handleChatCompletions(c: any) {
     });
   }
 
-  // 5. Forward to real upstream OPENAI_BASE_URL
+  // 7. Forward to real upstream OPENAI_BASE_URL
   const targetUrl = `${openaiBaseUrl.replace(/\/$/, '')}/chat/completions`;
   const forwardHeaders: Record<string, string> = {
     'Content-Type': 'application/json'
@@ -372,15 +671,7 @@ async function handleChatCompletions(c: any) {
         created_at: now
       };
 
-      db.insert(trace_spans).values(errSpan).run();
-
-      broadcastEvent({
-        type: 'SPAN_CREATED',
-        data: errSpan,
-        runId,
-        spanId
-      });
-
+      commitSpanAndRun(db, errSpan, isResumedFromBreakpoint, 0, 0);
       return c.text(errorText, upstreamRes.status as any);
     }
 
@@ -472,26 +763,7 @@ async function handleChatCompletions(c: any) {
           created_at: now
         };
 
-        db.insert(trace_spans).values(span).run();
-
-        const runs = db.select().from(trace_runs).where(eq(trace_runs.id, runId)).limit(1).all();
-        if (runs.length > 0) {
-          const run = runs[0];
-          db.update(trace_runs)
-            .set({
-              total_tokens: run.total_tokens + totalTokens,
-              total_cost_usd: run.total_cost_usd + costResult.totalCost
-            })
-            .where(eq(trace_runs.id, runId))
-            .run();
-        }
-
-        broadcastEvent({
-          type: 'SPAN_CREATED',
-          data: span,
-          runId,
-          spanId
-        });
+        commitSpanAndRun(db, span, isResumedFromBreakpoint, totalTokens, costResult.totalCost);
       });
     }
 
@@ -523,26 +795,7 @@ async function handleChatCompletions(c: any) {
       created_at: now
     };
 
-    db.insert(trace_spans).values(span).run();
-
-    const runs = db.select().from(trace_runs).where(eq(trace_runs.id, runId)).limit(1).all();
-    if (runs.length > 0) {
-      const run = runs[0];
-      db.update(trace_runs)
-        .set({
-          total_tokens: run.total_tokens + totalTokens,
-          total_cost_usd: run.total_cost_usd + costResult.totalCost
-        })
-        .where(eq(trace_runs.id, runId))
-        .run();
-    }
-
-    broadcastEvent({
-      type: 'SPAN_CREATED',
-      data: span,
-      runId,
-      spanId
-    });
+    commitSpanAndRun(db, span, isResumedFromBreakpoint, totalTokens, costResult.totalCost);
 
     return c.json(upstreamJson, 200, {
       'X-AetherTrace-Cache': 'MISS',
@@ -569,14 +822,7 @@ async function handleChatCompletions(c: any) {
       created_at: now
     };
 
-    db.insert(trace_spans).values(errSpan).run();
-
-    broadcastEvent({
-      type: 'SPAN_CREATED',
-      data: errSpan,
-      runId,
-      spanId
-    });
+    commitSpanAndRun(db, errSpan, isResumedFromBreakpoint, 0, 0);
 
     return c.json({
       error: {

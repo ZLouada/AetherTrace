@@ -128,3 +128,84 @@ export async function importRun(bundle: any): Promise<{ success: boolean; runId:
   }
   return res.json();
 }
+
+// --- Phase 4: Breakpoints & Chaos Engineering API ---
+
+export interface BreakpointConfig {
+  enabled: boolean;
+  matchAgentNames: string[];
+  matchModels: string[];
+}
+
+export interface PendingBreakpoint {
+  spanId: string;
+  runId: string;
+  agentName: string;
+  model: string;
+  requestPayload: any;
+  createdAt: number;
+}
+
+export interface BreakpointResolution {
+  action: 'resume' | 'mock' | 'abort';
+  modifiedPayload?: any;
+  mockedResponse?: string;
+  reason?: string;
+}
+
+export interface ChaosConfig {
+  enabled: boolean;
+  latencySpikeMs: number;
+  rateLimitErrorRate: number;
+  upstream500ErrorRate: number;
+  malformedJsonRate: number;
+}
+
+export async function fetchBreakpoints(): Promise<{ config: BreakpointConfig; pending: PendingBreakpoint[] }> {
+  const res = await fetch(`${API_BASE}/api/breakpoints`, { cache: 'no-store' });
+  if (!res.ok) throw new Error('Failed to fetch breakpoints');
+  return res.json();
+}
+
+export async function updateBreakpointConfig(config: Partial<BreakpointConfig>): Promise<{ success: boolean; config: BreakpointConfig }> {
+  const res = await fetch(`${API_BASE}/api/breakpoints/config`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config)
+  });
+  if (!res.ok) throw new Error('Failed to update breakpoint config');
+  return res.json();
+}
+
+export async function resolveBreakpoint(
+  spanId: string,
+  resolution: BreakpointResolution
+): Promise<{ success: boolean; spanId: string; action: string }> {
+  const res = await fetch(`${API_BASE}/api/breakpoints/${spanId}/resolve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(resolution)
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error?.message || `Failed to resolve breakpoint`);
+  }
+  return res.json();
+}
+
+export async function fetchChaosConfig(): Promise<{ config: ChaosConfig }> {
+  const res = await fetch(`${API_BASE}/api/chaos/config`, { cache: 'no-store' });
+  if (!res.ok) throw new Error('Failed to fetch chaos config');
+  return res.json();
+}
+
+export async function updateChaosConfig(config: Partial<ChaosConfig>): Promise<{ success: boolean; config: ChaosConfig }> {
+  const res = await fetch(`${API_BASE}/api/chaos/config`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config)
+  });
+  if (!res.ok) throw new Error('Failed to update chaos config');
+  return res.json();
+}
+
