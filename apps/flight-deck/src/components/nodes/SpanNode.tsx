@@ -1,7 +1,7 @@
 import React, { memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
 import { Bot, Cpu, Zap, AlertOctagon, Clock, DollarSign, ArrowRight } from 'lucide-react';
-import type { TraceSpan } from '../../lib/api.js';
+import type { TraceSpan } from '@/lib/api';
 
 export interface SpanNodeData {
   span: TraceSpan;

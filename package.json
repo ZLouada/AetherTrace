@@ -9,6 +9,7 @@
     "check-types": "turbo run check-types",
     "test": "turbo run test",
     "test:smoke": "tsx examples/smoke-test.ts",
+    "demo:sim": "tsx examples/multi-agent-sim.ts",
     "start:proxy": "pnpm --filter @aethertrace/proxy-server start",
     "clean": "rm -rf node_modules .turbo"
   },

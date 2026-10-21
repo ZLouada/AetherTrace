@@ -1,6 +1,6 @@
 import dagre from 'dagre';
 import type { Node, Edge } from '@xyflow/react';
-import type { TraceSpan } from './api.js';
+import type { TraceSpan } from '@/lib/api';
 
 export const NODE_WIDTH = 320;
 export const NODE_HEIGHT = 175;
