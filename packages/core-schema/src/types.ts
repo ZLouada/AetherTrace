@@ -163,3 +163,70 @@ export const WebSocketEventSchema = z.object({
   runId: z.string().optional(),
   spanId: z.string().optional()
 });
+
+// --- Phase 5: Run Diffing & CI Regression Types ---
+
+export type SpanDiffClassification = 'identical_cached' | 'modified_fork' | 'diverged_downstream';
+
+export interface SpanDiffItem {
+  stepIndex: number;
+  status: SpanDiffClassification;
+  agentName: string;
+  baseSpan: TraceSpan | null;
+  targetSpan: TraceSpan | null;
+  deltas: {
+    costDeltaUsd: number;
+    costSavingsPercent: number;
+    tokenDelta: number;
+    latencyDeltaMs: number;
+    modelChanged: boolean;
+    promptChanged: boolean;
+  };
+}
+
+export interface RunDiffSummary {
+  baseRunId: string;
+  baseRunName: string;
+  targetRunId: string;
+  targetRunName: string;
+  baseCostUsd: number;
+  targetCostUsd: number;
+  costDeltaUsd: number;
+  costSavingsPercent: number; // percentage (e.g. 85.5)
+  baseTokens: number;
+  targetTokens: number;
+  tokenDelta: number;
+  baseLatencyMs: number;
+  targetLatencyMs: number;
+  latencyDeltaMs: number;
+  identicalStepsCount: number;
+  divergedStepsCount: number;
+}
+
+export interface RunDiffResult {
+  summary: RunDiffSummary;
+  steps: SpanDiffItem[];
+}
+
+export interface RegressionAssertionOptions {
+  maxCostUsd?: number;
+  maxLatencyMs?: number;
+  expectedStatus?: 'completed' | 'running';
+  requireNoBreakerTripped?: boolean;
+}
+
+export interface RegressionAssertionResult {
+  passed: boolean;
+  runId: string;
+  runName: string;
+  actualStatus: string;
+  actualCostUsd: number;
+  maxCostUsd?: number;
+  costPassed: boolean;
+  actualLatencyMs: number;
+  maxLatencyMs?: number;
+  latencyPassed: boolean;
+  statusPassed: boolean;
+  failures: string[];
+}
+

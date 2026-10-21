@@ -209,3 +209,58 @@ export async function updateChaosConfig(config: Partial<ChaosConfig>): Promise<{
   return res.json();
 }
 
+// --- Phase 5: Run Diffing & Model Comparison API ---
+
+export type SpanDiffClassification = 'identical_cached' | 'modified_fork' | 'diverged_downstream';
+
+export interface SpanDiffItem {
+  stepIndex: number;
+  status: SpanDiffClassification;
+  agentName: string;
+  baseSpan: TraceSpan | null;
+  targetSpan: TraceSpan | null;
+  deltas: {
+    costDeltaUsd: number;
+    costSavingsPercent: number;
+    tokenDelta: number;
+    latencyDeltaMs: number;
+    modelChanged: boolean;
+    promptChanged: boolean;
+  };
+}
+
+export interface RunDiffSummary {
+  baseRunId: string;
+  baseRunName: string;
+  targetRunId: string;
+  targetRunName: string;
+  baseCostUsd: number;
+  targetCostUsd: number;
+  costDeltaUsd: number;
+  costSavingsPercent: number;
+  baseTokens: number;
+  targetTokens: number;
+  tokenDelta: number;
+  baseLatencyMs: number;
+  targetLatencyMs: number;
+  latencyDeltaMs: number;
+  identicalStepsCount: number;
+  divergedStepsCount: number;
+}
+
+export interface RunDiffResult {
+  summary: RunDiffSummary;
+  steps: SpanDiffItem[];
+}
+
+export async function fetchRunDiff(baseId: string, targetId: string): Promise<RunDiffResult> {
+  const res = await fetch(`${API_BASE}/api/runs/${baseId}/diff/${targetId}`, { cache: 'no-store' });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error?.message || `Failed to fetch diff between ${baseId} and ${targetId}`);
+  }
+  const data = await res.json();
+  return data.diff || data;
+}
+
+

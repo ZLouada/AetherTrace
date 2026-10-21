@@ -12,7 +12,8 @@ import {
   Upload,
   Download,
   PauseCircle,
-  Flame
+  Flame,
+  Scale
 } from 'lucide-react';
 import type { GlobalStats, BreakpointConfig, ChaosConfig } from '@/lib/api';
 
@@ -30,6 +31,7 @@ interface TopBarProps {
   onToggleBreakpoints: () => void;
   chaosConfig: ChaosConfig | null;
   onOpenChaosModal: () => void;
+  onOpenDiffModal: () => void;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -45,8 +47,10 @@ export const TopBar: React.FC<TopBarProps> = ({
   pendingBreakpointsCount,
   onToggleBreakpoints,
   chaosConfig,
-  onOpenChaosModal
+  onOpenChaosModal,
+  onOpenDiffModal
 }) => {
+
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   return (
     <header className="h-16 border-b border-gray-800 bg-[#0b0f1a] px-5 flex items-center justify-between shrink-0 select-none">
@@ -189,6 +193,17 @@ export const TopBar: React.FC<TopBarProps> = ({
           <Flame className={`w-3.5 h-3.5 ${chaosConfig?.enabled ? 'text-purple-400 animate-bounce' : 'text-gray-400'}`} />
           <span>Chaos: {chaosConfig?.enabled ? 'ACTIVE' : 'CONFIG'}</span>
         </button>
+
+        {/* Diff Arena Modal Trigger */}
+        <button
+          onClick={onOpenDiffModal}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-medium border transition-all text-cyan-300 bg-[#111827] hover:bg-gray-800 border-cyan-800/60 hover:border-cyan-600 shadow-[0_0_10px_rgba(6,182,212,0.15)]"
+          title="Open Split-Screen DAG Diff Arena (Compare Runs & Models)"
+        >
+          <Scale className="w-3.5 h-3.5 text-cyan-400" />
+          <span>⚖️ Diff Arena</span>
+        </button>
+
 
         {/* Export .trace Button */}
         <button

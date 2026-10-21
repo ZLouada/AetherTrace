@@ -5,9 +5,12 @@ import {
   getDatabase,
   trace_runs,
   trace_spans,
+  computeRunDiff,
   type TraceRun,
-  type TraceSpan
+  type TraceSpan,
+  type RunDiffResult
 } from '@aethertrace/core-schema';
+
 import { broadcastEvent } from '../broadcaster.js';
 
 export const tracesRouter = new Hono();
@@ -71,6 +74,28 @@ tracesRouter.get('/runs/:id/spans', async (c) => {
     spans
   });
 });
+
+/**
+ * GET /api/runs/:baseId/diff/:targetId - Compare any two runs side-by-side
+ */
+tracesRouter.get('/runs/:baseId/diff/:targetId', async (c) => {
+  const { db } = getDatabase();
+  const baseId = c.req.param('baseId');
+  const targetId = c.req.param('targetId');
+
+  const diffResult = computeRunDiff(db, baseId, targetId);
+  if (!diffResult) {
+    return c.json({ error: { message: `One or both runs not found ('${baseId}', '${targetId}')` } }, 404);
+  }
+
+  return c.json({
+    success: true,
+    summary: diffResult.summary,
+    steps: diffResult.steps,
+    diff: diffResult
+  });
+});
+
 
 /**
  * GET /api/runs/:id/export - Export a self-contained portable .trace.json bundle (Wireshark .pcap equivalent)

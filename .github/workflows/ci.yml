@@ -44,3 +44,7 @@ jobs:
       - name: Run Phase 4 Live Breakpoint & Chaos Test
         run: pnpm test:phase4
 
+      - name: Run Phase 5 Run Diff & CI Regression Test
+        run: pnpm test:phase5
+
+

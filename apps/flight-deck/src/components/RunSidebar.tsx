@@ -9,7 +9,8 @@ import {
   Search,
   Filter,
   RefreshCw,
-  Cpu
+  Cpu,
+  Scale
 } from 'lucide-react';
 import type { TraceRun } from '@/lib/api';
 
@@ -19,6 +20,7 @@ interface RunSidebarProps {
   onSelectRun: (runId: string) => void;
   onRefreshRuns: () => void;
   isLoading: boolean;
+  onCompareRuns?: (baseRunId: string, targetRunId: string) => void;
 }
 
 export const RunSidebar: React.FC<RunSidebarProps> = ({
@@ -26,8 +28,10 @@ export const RunSidebar: React.FC<RunSidebarProps> = ({
   selectedRunId,
   onSelectRun,
   onRefreshRuns,
-  isLoading
+  isLoading,
+  onCompareRuns
 }) => {
+
   const [filterQuery, setFilterQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
 
@@ -158,13 +162,28 @@ export const RunSidebar: React.FC<RunSidebarProps> = ({
                     {run.id}
                   </span>
                   {isForked && (
-                    <span
-                      className="inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.2 rounded bg-purple-950/80 text-purple-300 border border-purple-800"
-                      title={`Forked from ${run.parent_run_id}`}
-                    >
-                      <GitFork className="w-2.5 h-2.5 text-purple-400" />
-                      Forked
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className="inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.2 rounded bg-purple-950/80 text-purple-300 border border-purple-800"
+                        title={`Forked from ${run.parent_run_id}`}
+                      >
+                        <GitFork className="w-2.5 h-2.5 text-purple-400" />
+                        Forked
+                      </span>
+                      {run.parent_run_id && onCompareRuns && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onCompareRuns(run.parent_run_id!, run.id);
+                          }}
+                          className="inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.2 rounded bg-cyan-950/90 text-cyan-300 hover:text-white hover:bg-cyan-900 border border-cyan-800 transition-colors"
+                          title="Compare with Parent Run in Diff Arena"
+                        >
+                          <Scale className="w-2.5 h-2.5 text-cyan-400" />
+                          Diff Parent
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
 

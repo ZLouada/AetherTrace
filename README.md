@@ -24,7 +24,7 @@
 [Quickstart](#-quickstart-in-30-seconds) •
 [Step-by-Step Guide](#-step-by-step-guide) •
 [Architecture](#-architecture--packet-lifecycle) •
-[SDKs](#-step-10-auto-context-propagation-sdks) •
+[SDKs](#-step-12-auto-context-propagation-sdks) •
 [Comparison](#-how-aethertrace-compares) •
 [Contributing](#-contributing)
 
@@ -52,9 +52,12 @@ AetherTrace is an open-source, 100% local-first telemetry workstation:
 - 🛡️ **Hardware Circuit Breakers:** Sets hard budget caps and trips instantly on duplicate prompt loops before credit cards get charged.
 - ⏸️ **Live Mid-Flight Breakpoints (Burp Suite for AI):** Pause agent calls mid-flight, hold HTTP sockets open in memory, mutate prompts/tools in real time, or inject mock responses at \$0.00 cost.
 - 🌪️ **Chaos Engineering Engine:** Inject synthetic 429 rate limits, 502 upstream crashes, latency delays, and malformed JSON syntax to pressure-test agent self-healing loops.
+- ⚖️ **Side-by-Side DAG Diff Arena:** Compare any two runs side-by-side with executive cost savings scorecards, latency deltas, and split-screen prompt/response inspections.
+- 🎯 **Deterministic CI Regression Gate:** Replay golden `.trace.json` bundles in CI (`aethertrace assert`) to enforce budget ceilings, latency SLAs, and zero circuit-breaker trips.
 - 🖥️ **Interactive Flight Deck UI (`:3000`):** Automatic top-to-bottom DAG visualization powered by `@xyflow/react` and Dagre.
 - ⏳ **Time-Travel Fork & Replay:** Edit historical prompts or models at any node in the graph, branch off, and replay ancestor nodes in **0ms at $0.00** from local cache.
 - 📦 **Portable `.trace` Bundles:** Export any run into a self-contained `.trace.json` file (the AI equivalent of a `.pcap`). Teammates can import and inspect it with one click.
+
 
 ---
 
@@ -310,7 +313,58 @@ Stress-test multi-agent fault recovery, retries, and fallback mechanisms without
 
 ---
 
-### Step 9: Run the Autonomous Multi-Agent Simulator
+### Step 9: Side-by-Side DAG Diff Arena (Model & Prompt Comparison)
+
+AetherTrace v0.3.0 introduces visual DAG diffing so you can safely substitute expensive models (`gpt-4o`) with smaller or local models (`gpt-4o-mini`, `llama3`) and immediately inspect the exact cost, latency, and quality differences:
+
+1. **Trigger Diff Arena:**
+   - On any forked run in the sidebar, click **"⚖️ Diff Parent"**.
+   - Or click **"⚖️ Diff Arena"** in the top bar to select any two runs.
+2. **Executive Scorecard Banner:**
+   - **Cost Delta:** e.g., `$0.001250 ➔ $0.000180 (-85.6% Saved 💰)`.
+   - **Latency Delta:** e.g., `640ms ➔ 155ms (-485ms Faster ⚡)`.
+   - **Tokens Delta:** e.g., `372 ➔ 310 (-62 tokens)`.
+3. **Step-by-Step Aligned DAG Timeline:**
+   - **⚡ Shared Cached Prefix (`identical_cached`):** Highlights replayed upstream steps (0ms / $0.00).
+   - **🔀 Fork Point (`modified_fork`):** Highlights the exact mutated step with a side-by-side prompt and completion viewer to evaluate model response quality.
+   - **⬇ Diverged Downstream (`diverged_downstream`):** Tracks cascading downstream executions.
+
+#### Terminal ASCII Diff:
+```bash
+npx aethertrace diff run_base_179261588 run_forked_179261588
+```
+
+#### REST Diff API:
+```bash
+curl http://localhost:4000/api/runs/:baseId/diff/:targetId
+```
+
+---
+
+### Step 10: Deterministic CI Regression Testing in GitHub Actions
+
+Run automated regression assertions on multi-agent workflows in your CI/CD pipelines before deploying to production:
+
+```bash
+# Assert that replaying golden trace does not exceed $0.05 and complies with 3000ms SLA
+npx aethertrace assert production-golden.trace.json --max-cost 0.05 --max-latency 3000
+```
+
+#### What It Asserts:
+1. **Clean Pipeline Execution:** Status is not `breaker_tripped` or `failed`.
+2. **Budget Ceilings:** Total USD spend does not exceed `--max-cost`.
+3. **Latency SLAs:** Total latency does not exceed `--max-latency`.
+4. **Exit Code:** Exits with `0` (PASS) or `1` (FAIL), blocking pull requests on regressions!
+
+#### GitHub Actions Workflow Example:
+```yaml
+- name: Run AetherTrace Multi-Agent CI Regression Gate
+  run: npx aethertrace assert test-fixtures/incident-triager.trace.json --max-cost 0.02
+```
+
+---
+
+### Step 11: Run the Autonomous Multi-Agent Simulator
 
 To see all features in action without configuring an LLM app:
 
@@ -328,7 +382,7 @@ This dispatches a 5-step agent DAG:
 
 ---
 
-### Step 10: Auto-Context Propagation SDKs
+### Step 12: Auto-Context Propagation SDKs
 
 Avoid manually passing `parent_span_id` through your codebase using our native runtime context SDKs:
 
@@ -409,9 +463,10 @@ AetherTrace/
 │   ├── smoke-test.ts                   # Phase 1 integration verification
 │   ├── multi-agent-sim.ts              # Phase 2 5-agent DAG simulation with loop breaker trip
 │   ├── sdk-export-test.ts              # Phase 3 auto-context propagation & .trace export/import test
-│   └── phase4-breakpoint-chaos-test.ts # Phase 4 live mid-flight breakpoints & chaos fault injection
+│   ├── phase4-breakpoint-chaos-test.ts # Phase 4 live mid-flight breakpoints & chaos fault injection
+│   └── phase5-diff-regression-test.ts  # Phase 5 run diffing & CI regression gate test
 ├── .github/
-│   ├── workflows/ci.yml     # Automated pnpm install, build, check-types, smoke & e2e test
+│   ├── workflows/ci.yml     # Automated pnpm install, build, check-types, smoke, e2e, phase4 & phase5 test
 │   └── ISSUE_TEMPLATE/      # Bug reports (with .trace bundle upload) & feature requests
 ├── Dockerfile               # Multi-stage production container
 ├── CONTRIBUTING.md          # Architecture guide & good first issues
@@ -430,6 +485,8 @@ AetherTrace/
 | **Drop-in Proxy (`/v1`)** | **✅ Yes** | ❌ SDK wrappers only | ⚠️ Partial | ✅ Yes |
 | **Live Mid-Flight Breakpoints** | **✅ Yes (Pause, Mutate, Mock)** | ❌ No | ❌ No | ❌ No |
 | **Chaos Fault Injection** | **✅ Yes (429, 500, Latency, Corrupt)** | ❌ No | ❌ No | ❌ No |
+| **Side-by-Side DAG Diff Arena**| **✅ Yes (Split-screen & Cost Delta %)**| ❌ No | ❌ No | ❌ No |
+| **CI Regression Gate** | **✅ Yes (Budget & SLA assertions)** | ❌ No | ❌ No | ❌ No |
 | **Time-Travel Fork & Replay** | **✅ Yes (Edit & Branch)** | ❌ Read-only replays | ❌ Read-only replays | ❌ No |
 | **Hardware Circuit Breakers**| **✅ Yes (Budget & Loop)** | ❌ No | ❌ No | ⚠️ Budget limits only |
 | **Portable `.trace` Files** | **✅ Yes (`.pcap` for AI)**| ❌ No | ❌ No | ❌ No |
@@ -456,6 +513,9 @@ pnpm test:e2e
 
 # 5. Verify live mid-flight breakpoints, prompt mutation, and chaos fault injection
 pnpm test:phase4
+
+# 6. Verify side-by-side run diffing and CI regression assertions
+pnpm test:phase5
 ```
 
 ---
@@ -469,6 +529,8 @@ USAGE:
 COMMANDS:
   start                  Launch local proxy server (port 4000) & event bus
   sim                    Execute a 5-step autonomous multi-agent simulation
+  diff <base_id> <target_id> Compare two runs side-by-side in an ASCII diff matrix
+  assert <trace.json>    Assert budget ceiling, latency SLA, and zero breaker trips
   export <run_id>        Export a run to a portable .trace.json bundle
   import <file.json>     Import a .trace.json bundle into local SQLite
   help                   Show this help menu
@@ -476,6 +538,8 @@ COMMANDS:
 OPTIONS:
   -o, --output <file>    Output destination file for export (default: run_<id>.trace.json)
   -p, --port <number>    Port to listen on (default: 4000)
+  --max-cost <usd>       Max allowed USD spend for regression assertion
+  --max-latency <ms>     Max allowed latency in ms for regression assertion
 ```
 
 ---

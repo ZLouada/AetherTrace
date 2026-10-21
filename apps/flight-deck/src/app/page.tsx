@@ -6,6 +6,7 @@ import { RunSidebar } from '@/components/RunSidebar';
 import { DagCanvas } from '@/components/DagCanvas';
 import { InspectorDrawer } from '@/components/InspectorDrawer';
 import { ChaosModal } from '@/components/ChaosModal';
+import { DiffArenaModal } from '@/components/DiffArenaModal';
 import {
   fetchRuns,
   fetchRunSpans,
@@ -44,6 +45,12 @@ export default function FlightDeckPage() {
   const [pendingBreakpoints, setPendingBreakpoints] = useState<PendingBreakpoint[]>([]);
   const [chaosConfig, setChaosConfig] = useState<ChaosConfig | null>(null);
   const [isChaosModalOpen, setIsChaosModalOpen] = useState<boolean>(false);
+
+  // Phase 5: Diff Arena State
+  const [isDiffModalOpen, setIsDiffModalOpen] = useState<boolean>(false);
+  const [diffBaseId, setDiffBaseId] = useState<string | null>(null);
+  const [diffTargetId, setDiffTargetId] = useState<string | null>(null);
+
 
   const selectedRunIdRef = useRef<string | null>(null);
   selectedRunIdRef.current = selectedRunId;
@@ -366,6 +373,23 @@ export default function FlightDeckPage() {
     }
   };
 
+  const handleOpenDiffModal = (baseId?: string, targetId?: string) => {
+    if (baseId && targetId) {
+      setDiffBaseId(baseId);
+      setDiffTargetId(targetId);
+    } else if (selectedRunId) {
+      setDiffTargetId(selectedRunId);
+      const selected = runs.find((r) => r.id === selectedRunId);
+      if (selected?.parent_run_id) {
+        setDiffBaseId(selected.parent_run_id);
+      } else {
+        const otherRun = runs.find((r) => r.id !== selectedRunId);
+        setDiffBaseId(otherRun?.id || null);
+      }
+    }
+    setIsDiffModalOpen(true);
+  };
+
   const selectedRun = runs.find((r) => r.id === selectedRunId) || null;
 
   return (
@@ -385,6 +409,7 @@ export default function FlightDeckPage() {
         onToggleBreakpoints={handleToggleBreakpoints}
         chaosConfig={chaosConfig}
         onOpenChaosModal={() => setIsChaosModalOpen(true)}
+        onOpenDiffModal={() => handleOpenDiffModal()}
       />
 
       {/* 3-Pane Flight Deck Body */}
@@ -399,6 +424,7 @@ export default function FlightDeckPage() {
           }}
           onRefreshRuns={() => loadRuns()}
           isLoading={isLoadingRuns}
+          onCompareRuns={(baseId, targetId) => handleOpenDiffModal(baseId, targetId)}
         />
 
         {/* Center Pane: Interactive React Flow DAG */}
@@ -432,6 +458,16 @@ export default function FlightDeckPage() {
         config={chaosConfig}
         onSave={handleSaveChaosConfig}
       />
+
+      {/* Phase 5: Side-by-Side Diff Arena Modal */}
+      <DiffArenaModal
+        isOpen={isDiffModalOpen}
+        onClose={() => setIsDiffModalOpen(false)}
+        runs={runs}
+        initialBaseId={diffBaseId}
+        initialTargetId={diffTargetId}
+      />
     </div>
   );
 }
+
