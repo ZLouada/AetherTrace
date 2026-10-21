@@ -1,0 +1,11 @@
+node_modules
+dist
+.turbo
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+.trace.sqlite*
+.env
+.env.local
+.DS_Store

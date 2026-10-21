@@ -1,0 +1,23 @@
+{
+  "name": "aethertrace",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "check-types": "turbo run check-types",
+    "test": "turbo run test",
+    "test:smoke": "tsx examples/smoke-test.ts",
+    "start:proxy": "pnpm --filter @aethertrace/proxy-server start",
+    "clean": "rm -rf node_modules .turbo"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/ws": "^8.5.13",
+    "turbo": "^2.3.3",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "ws": "^8.18.0"
+  }
+}
