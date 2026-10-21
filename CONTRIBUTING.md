@@ -46,7 +46,7 @@ aethertrace/
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/your-org/aethertrace.git
+   git clone https://github.com/ZLouada/AetherTrace.git
    cd aethertrace
    ```
 
@@ -83,7 +83,7 @@ aethertrace/
 
 ## Good First Issues
 
-Looking for somewhere to start? Check out issues tagged [`good first issue`](https://github.com/your-org/aethertrace/labels/good%20first%20issue) or explore these areas:
+Looking for somewhere to start? Check out issues tagged [`good first issue`](https://github.com/ZLouada/AetherTrace/labels/good%20first%20issue) or explore these areas:
 
 1. **Pricing Engine Models:** Add pricing rates for new models (e.g. Gemini 1.5, DeepSeek R1/V3, Mistral Large) in `packages/pricing-engine/src/registry.ts`.
 2. **LangChain / AutoGen / CrewAI Callbacks:** Create first-class adapter hooks that automatically map framework callbacks to AetherTrace headers.
