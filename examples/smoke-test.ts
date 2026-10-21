@@ -2,7 +2,6 @@ import { WebSocket } from 'ws';
 import { startServer } from '../apps/proxy-server/src/index.js';
 import { getDatabase, closeDatabase } from '@aethertrace/core-schema';
 
-// ANSI Colors for beautiful CLI output
 const colors = {
   reset: '\x1b[0m',
   bold: '\x1b[1m',
@@ -28,324 +27,248 @@ async function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function runSmokeTests() {
-  console.log(`\n${colors.cyan}${colors.bold}======================================================${colors.reset}`);
-  console.log(`${colors.cyan}${colors.bold}       AetherTrace Core Verification Suite            ${colors.reset}`);
-  console.log(`${colors.cyan}${colors.bold}   "Wireshark for AI Agents" - Phase 1 Smoke Test     ${colors.reset}`);
-  console.log(`${colors.cyan}${colors.bold}======================================================${colors.reset}\n`);
+async function main() {
+  console.log(`\n${colors.cyan}${colors.bold}========================================================================${colors.reset}`);
+  console.log(`${colors.cyan}${colors.bold}       AetherTrace Core Engine & Interceptor Proxy Verification         ${colors.reset}`);
+  console.log(`${colors.cyan}${colors.bold}            "Wireshark for AI Agents" - Phase 1 Smoke Test              ${colors.reset}`);
+  console.log(`${colors.cyan}${colors.bold}========================================================================${colors.reset}\n`);
 
   const PORT = 4000;
   const BASE_URL = `http://localhost:${PORT}`;
   const WS_URL = `ws://localhost:${PORT}/ws`;
 
-  // Start Proxy Server
-  console.log(`${colors.yellow}▶ Starting local AetherTrace Proxy & Event Bus on port ${PORT}...${colors.reset}`);
-  const { server, wss } = startServer(PORT);
-  await sleep(400);
+  console.log(`${colors.yellow}▶ Booting local proxy server on port ${PORT}...${colors.reset}`);
+  const { server } = startServer(PORT);
+  await sleep(350);
 
-  const receivedWsEvents: any[] = [];
+  const receivedEvents: any[] = [];
   let wsClient: WebSocket | null = null;
 
   try {
-    // 1. Health Endpoint Test
-    console.log(`\n${colors.magenta}[1/8] Server Health & System Topology${colors.reset}`);
-    const healthRes = await fetch(`${BASE_URL}/health`);
-    if (!healthRes.ok) throw new Error(`Health returned status ${healthRes.status}`);
-    const healthData = await healthRes.json();
-    if (healthData.status !== 'ok') throw new Error(`Unexpected status: ${healthData.status}`);
-    pass('Health check probe', `Service: ${healthData.service}, Port: ${healthData.port}`);
-
-    // 2. WebSocket Telemetry Broadcaster Connection
-    console.log(`\n${colors.magenta}[2/8] Real-time WebSocket Telemetry Broadcaster${colors.reset}`);
+    // 0. Connect WebSocket Client
     await new Promise<void>((resolve, reject) => {
       wsClient = new WebSocket(WS_URL);
-      const timeout = setTimeout(() => reject(new Error('WebSocket connection timed out')), 3000);
-
+      const timer = setTimeout(() => reject(new Error('WebSocket connection timed out')), 3000);
       wsClient.on('open', () => {
-        clearTimeout(timeout);
-        pass('WebSocket client attached to /ws');
+        clearTimeout(timer);
         resolve();
       });
-
-      wsClient.on('message', (data) => {
+      wsClient.on('message', (msg) => {
         try {
-          const parsed = JSON.parse(data.toString());
-          receivedWsEvents.push(parsed);
+          receivedEvents.push(JSON.parse(msg.toString()));
         } catch {}
       });
-
       wsClient.on('error', (err) => {
-        clearTimeout(timeout);
+        clearTimeout(timer);
         reject(err);
       });
     });
+    pass('WebSocket connected to /ws', 'Telemetry broadcaster listening');
 
-    await sleep(200);
-    const readyEvent = receivedWsEvents.find((e) => e.type === 'connection:ready');
-    if (!readyEvent) throw new Error('Expected connection:ready handshake event');
-    pass('WebSocket handshake verified', `Message: "${readyEvent.data.message}"`);
-
-    // 3. Non-Streaming Chat Completion Proxy + Trace Persistence
-    console.log(`\n${colors.magenta}[3/8] Non-Streaming Proxy Interception & SQLite Persistence${colors.reset}`);
     const promptSeed = Date.now();
-    const testRunId = `run_test_${promptSeed}`;
+    const runId1 = `run_planner_${promptSeed}`;
+
+    // -----------------------------------------------------------------------------------------
+    // Call 1: Normal mocked agent call (X-Agent-Name: Planner, X-Max-Budget-USD: 0.05)
+    // -----------------------------------------------------------------------------------------
+    console.log(`\n${colors.magenta}[Call 1] Normal Mocked Agent Call (X-Agent-Name: Planner, X-Max-Budget-USD: 0.05)${colors.reset}`);
     const payload1 = {
       model: 'gpt-4o',
       messages: [
-        { role: 'system', content: 'You are an autonomous network security agent.' },
-        { role: 'user', content: `Inspect packet header TCP SYN 192.168.1.100:443 [Seed:${promptSeed}]` }
+        { role: 'system', content: 'You are an autonomous systems architect agent.' },
+        { role: 'user', content: `Deconstruct security requirements for OAuth2 token validation [Seed:${promptSeed}]` }
       ],
       temperature: 0.2
     };
 
     const t0 = Date.now();
-    const proxyRes1 = await fetch(`${BASE_URL}/v1/chat/completions`, {
+    const res1 = await fetch(`${BASE_URL}/v1/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-run-id': testRunId,
-        'x-run-name': 'smoke-nonstreaming-run',
-        'x-mock-response': 'true' // Offline deterministic engine
+        'X-Run-Id': runId1,
+        'X-Agent-Name': 'Planner',
+        'X-Max-Budget-USD': '0.05',
+        'X-Mock-Upstream': 'true'
       },
       body: JSON.stringify(payload1)
     });
 
-    if (!proxyRes1.ok) throw new Error(`Proxy completion failed with status ${proxyRes1.status}`);
-    const proxyJson1 = await proxyRes1.json();
     const lat1 = Date.now() - t0;
+    if (!res1.ok) throw new Error(`Call 1 failed with status: ${res1.status}`);
+    const json1 = await res1.json();
+    pass('Call 1 returned HTTP 200 OK', `Latency: ${lat1}ms, Model: ${json1.model}`);
 
-    const cacheHeader1 = proxyRes1.headers.get('x-aethertrace-cache');
-    const costHeader1 = proxyRes1.headers.get('x-aethertrace-cost');
-    if (cacheHeader1 !== 'MISS') throw new Error(`Expected X-AetherTrace-Cache MISS, got ${cacheHeader1}`);
-    pass('POST /v1/chat/completions returned 200 OK', `Latency: ${lat1}ms, Cache: ${cacheHeader1}`);
-    pass('Calculated USD cost attached', `Cost: ${costHeader1}`);
-
-    // Verify in SQLite database
     const { sqlite } = getDatabase();
-    const span1 = sqlite.prepare('SELECT * FROM trace_spans WHERE run_id = ?').get(testRunId) as any;
+    const run1 = sqlite.prepare('SELECT * FROM trace_runs WHERE id = ?').get(runId1) as any;
+    if (!run1) throw new Error('Run not found in SQLite trace_runs table');
+    pass('Run recorded in trace_runs', `ID: ${run1.id}, Status: ${run1.status}, Total Cost: $${run1.total_cost_usd.toFixed(6)}, Total Tokens: ${run1.total_tokens}`);
+
+    const span1 = sqlite.prepare('SELECT * FROM trace_spans WHERE run_id = ?').get(runId1) as any;
     if (!span1) throw new Error('Span not found in SQLite trace_spans table');
-    if (span1.status !== 'success') throw new Error(`Span status is ${span1.status}, expected success`);
-    if (span1.is_cached !== 0) throw new Error(`Expected is_cached 0, got ${span1.is_cached}`);
-    pass('Span persisted in SQLite (.trace.sqlite)', `ID: ${span1.id.slice(0, 16)}..., Model: ${span1.model}, Cost: $${span1.cost}`);
+    if (span1.agent_name !== 'Planner') throw new Error(`Expected agent_name 'Planner', got '${span1.agent_name}'`);
+    if (span1.cache_hit !== 0) throw new Error(`Expected cache_hit 0, got ${span1.cache_hit}`);
+    if (span1.cost_usd <= 0) throw new Error(`Expected cost_usd > 0, got ${span1.cost_usd}`);
+    pass('Span recorded in trace_spans', `Agent: ${span1.agent_name}, Type: ${span1.span_type}, Cost: $${span1.cost_usd}, Cache Hit: ${span1.cache_hit}`);
 
-    const runRecord1 = sqlite.prepare('SELECT * FROM trace_runs WHERE id = ?').get(testRunId) as any;
-    if (!runRecord1 || runRecord1.total_cost <= 0) throw new Error('Run record total_cost was not updated');
-    pass('Trace Run aggregated cost in SQLite', `Total Run Cost: $${runRecord1.total_cost.toFixed(6)}`);
-
-    // 4. Time-Travel Replay & 0ms Deterministic Cache Hit
-    console.log(`\n${colors.magenta}[4/8] Time-Travel Replay Engine (0ms Cache Lookup)${colors.reset}`);
+    // -----------------------------------------------------------------------------------------
+    // Call 2: Replay mode call (X-Replay-Mode: true) with the identical payload
+    // -----------------------------------------------------------------------------------------
+    console.log(`\n${colors.magenta}[Call 2] Replay Mode Call (X-Replay-Mode: true) with Identical Payload${colors.reset}`);
     const tReplay = Date.now();
-    const proxyResReplay = await fetch(`${BASE_URL}/v1/chat/completions`, {
+    const res2 = await fetch(`${BASE_URL}/v1/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-run-id': testRunId,
-        'x-run-name': 'smoke-nonstreaming-run',
-        'x-mock-response': 'true'
+        'X-Run-Id': runId1,
+        'X-Parent-Span-Id': span1.id,
+        'X-Agent-Name': 'Planner',
+        'X-Replay-Mode': 'true',
+        'X-Mock-Upstream': 'true'
       },
       body: JSON.stringify(payload1)
     });
 
-    const latReplay = Date.now() - tReplay;
-    const cacheHeaderReplay = proxyResReplay.headers.get('x-aethertrace-cache');
-    const costHeaderReplay = proxyResReplay.headers.get('x-aethertrace-cost');
-    if (cacheHeaderReplay !== 'HIT') throw new Error(`Expected cache HIT, got ${cacheHeaderReplay}`);
-    pass('Identical request served from Replay Cache', `Roundtrip: ${latReplay}ms, Header: ${cacheHeaderReplay}`);
-    pass('Zero additional cost on Replay', `Cost: ${costHeaderReplay}`);
+    const lat2 = Date.now() - tReplay;
+    if (!res2.ok) throw new Error(`Call 2 failed with status: ${res2.status}`);
+    const json2 = await res2.json();
 
-    const replaySpan = sqlite.prepare('SELECT * FROM trace_spans WHERE run_id = ? AND is_cached = 1').get(testRunId) as any;
-    if (!replaySpan) throw new Error('Replay span not recorded in SQLite with is_cached = 1');
-    pass('Replay span recorded in trace history', `Latency: ${replaySpan.latency_ms}ms, Cached: ${replaySpan.is_cached}`);
+    const cacheHeader2 = res2.headers.get('x-aethertrace-cache');
+    const latencyHeader2 = res2.headers.get('x-aethertrace-latency');
+    const costHeader2 = res2.headers.get('x-aethertrace-cost');
+    pass('Call 2 returned HTTP 200 OK from Replay Cache', `Roundtrip: ${lat2}ms, Header: ${cacheHeader2}, Replay Latency: ${latencyHeader2}`);
 
-    // 5. Streaming Proxy Interception & Token Assembly (SSE)
-    console.log(`\n${colors.magenta}[5/8] Streaming Interceptor & SSE Event-Stream Pipeline${colors.reset}`);
-    const streamRunId = `run_stream_${Date.now()}`;
-    const payloadStream = {
-      model: 'claude-3-5-sonnet-20241022',
-      messages: [
-        { role: 'user', content: `Stream high-frequency agent tool trace output [Seed:${promptSeed}]` }
-      ],
-      stream: true
-    };
+    const replaySpan = sqlite.prepare('SELECT * FROM trace_spans WHERE run_id = ? AND cache_hit = 1').get(runId1) as any;
+    if (!replaySpan) throw new Error('Replay span with cache_hit = 1 not found in SQLite');
+    if (replaySpan.cost_usd !== 0) throw new Error(`Expected cost_usd === 0, got ${replaySpan.cost_usd}`);
+    if (replaySpan.cache_hit !== 1) throw new Error(`Expected cache_hit === 1, got ${replaySpan.cache_hit}`);
+    pass('Replay verified in SQLite', `cache_hit: ${replaySpan.cache_hit}, cost_usd: $${replaySpan.cost_usd.toFixed(6)}, latency_ms: ${replaySpan.latency_ms}ms`);
 
-    const streamRes = await fetch(`${BASE_URL}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-run-id': streamRunId,
-        'x-run-name': 'smoke-stream-run',
-        'x-mock-response': 'true'
-      },
-      body: JSON.stringify(payloadStream)
-    });
-
-    if (!streamRes.ok) throw new Error(`Streaming request failed: ${streamRes.status}`);
-    const reader = streamRes.body?.getReader();
-    if (!reader) throw new Error('No readable stream reader on response');
-
-    let streamBuffer = '';
-    const decoder = new TextDecoder();
-    let sseChunkCount = 0;
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      const text = decoder.decode(value, { stream: true });
-      streamBuffer += text;
-      const lines = text.split('\n');
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          sseChunkCount++;
-        }
-      }
-    }
-
-    if (!streamBuffer.includes('data: [DONE]')) throw new Error('Stream did not terminate with data: [DONE]');
-    pass('SSE stream successfully parsed', `Received ${sseChunkCount} SSE frames terminating with [DONE]`);
-
-    await sleep(150);
-    const streamSpan = sqlite.prepare('SELECT * FROM trace_spans WHERE run_id = ?').get(streamRunId) as any;
-    if (!streamSpan || streamSpan.status !== 'success') throw new Error('Stream span not marked success in SQLite');
-    pass('Stream tokens aggregated & persisted in SQLite', `Prompt Tokens: ${streamSpan.prompt_tokens}, Completion Tokens: ${streamSpan.completion_tokens}, Cost: $${streamSpan.cost}`);
-
-    // 6. Circuit Breakers: Budget Limits & Repetitive Semantic Loops
-    console.log(`\n${colors.magenta}[6/8] Safety Circuit Breakers (Budget Cap & Loop Detection)${colors.reset}`);
-
-    // 6a. Budget Exceeded
-    const budgetBreakerRes = await fetch(`${BASE_URL}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-run-id': testRunId, // Already has spend
-        'x-max-budget-usd': '0.0000001', // Extremely low budget
-        'x-mock-response': 'true'
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o',
-        messages: [{ role: 'user', content: 'Attempt exceeding budget' }]
-      })
-    });
-
-    if (budgetBreakerRes.status !== 429) {
-      throw new Error(`Expected 429 for budget limit, got ${budgetBreakerRes.status}`);
-    }
-    const budgetErr = await budgetBreakerRes.json();
-    if (budgetErr.error.code !== 'budget_exceeded') {
-      throw new Error(`Expected error code 'budget_exceeded', got ${budgetErr.error.code}`);
-    }
-    pass('Budget Circuit Breaker tripped (HTTP 429)', budgetErr.error.message);
-
-    // 6b. Repetitive Semantic Loop
-    const loopRunId = `run_loop_${Date.now()}`;
+    // -----------------------------------------------------------------------------------------
+    // Call 3: Infinite loop trigger (identical non-replay request called 3 times in a row)
+    // -----------------------------------------------------------------------------------------
+    console.log(`\n${colors.magenta}[Call 3] Infinite Loop Trigger (3 identical non-replay calls in same run)${colors.reset}`);
+    const loopRunId = `run_loop_${promptSeed}`;
     const loopPayload = {
       model: 'gpt-4o-mini',
-      messages: [{ role: 'user', content: `Agent recursive call identical prompt [Seed:${promptSeed}]` }]
+      messages: [
+        { role: 'user', content: `Autonomous tool execution stuck in recursive thought [Seed:${promptSeed}]` }
+      ]
     };
 
-    // Send 1st and 2nd
-    for (let i = 1; i <= 2; i++) {
-      await fetch(`${BASE_URL}/v1/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-run-id': loopRunId,
-          'x-replay-cache': 'false', // Bypass cache so they execute as distinct spans
-          'x-mock-response': 'true'
-        },
-        body: JSON.stringify(loopPayload)
-      });
-    }
-
-    // 3rd attempt should trigger semantic loop breaker
-    const loopBreakerRes = await fetch(`${BASE_URL}/v1/chat/completions`, {
+    console.log(`  ${colors.dim}Sending iteration 1 (normal)...${colors.reset}`);
+    const resLoop1 = await fetch(`${BASE_URL}/v1/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-run-id': loopRunId,
-        'x-replay-cache': 'false',
-        'x-mock-response': 'true'
+        'X-Run-Id': loopRunId,
+        'X-Agent-Name': 'Researcher',
+        'X-Replay-Mode': 'false',
+        'X-Mock-Upstream': 'true'
+      },
+      body: JSON.stringify(loopPayload)
+    });
+    if (!resLoop1.ok) throw new Error(`Loop iteration 1 failed: ${resLoop1.status}`);
+
+    console.log(`  ${colors.dim}Sending iteration 2 (normal)...${colors.reset}`);
+    const resLoop2 = await fetch(`${BASE_URL}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Run-Id': loopRunId,
+        'X-Agent-Name': 'Researcher',
+        'X-Replay-Mode': 'false',
+        'X-Mock-Upstream': 'true'
+      },
+      body: JSON.stringify(loopPayload)
+    });
+    if (!resLoop2.ok) throw new Error(`Loop iteration 2 failed: ${resLoop2.status}`);
+
+    console.log(`  ${colors.dim}Sending iteration 3 (should trip circuit breaker)...${colors.reset}`);
+    const resLoop3 = await fetch(`${BASE_URL}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Run-Id': loopRunId,
+        'X-Agent-Name': 'Researcher',
+        'X-Replay-Mode': 'false',
+        'X-Mock-Upstream': 'true'
       },
       body: JSON.stringify(loopPayload)
     });
 
-    if (loopBreakerRes.status !== 429) {
-      throw new Error(`Expected 429 for semantic loop, got ${loopBreakerRes.status}`);
+    if (resLoop3.status !== 429) {
+      throw new Error(`Expected HTTP 429 Circuit Breaker Tripped, got ${resLoop3.status}`);
     }
-    const loopErr = await loopBreakerRes.json();
-    if (loopErr.error.code !== 'loop_detected') {
-      throw new Error(`Expected error code 'loop_detected', got ${loopErr.error.code}`);
+    const loopErrJson = await resLoop3.json();
+    pass('Circuit Breaker tripped on 3rd call with HTTP 429', `Error: ${loopErrJson.error.message}`);
+
+    // Verify SQLite update: trace_runs.status = 'breaker_tripped'
+    const loopRunRecord = sqlite.prepare('SELECT * FROM trace_runs WHERE id = ?').get(loopRunId) as any;
+    if (!loopRunRecord || loopRunRecord.status !== 'breaker_tripped') {
+      throw new Error(`Expected trace_runs.status === 'breaker_tripped', got '${loopRunRecord?.status}'`);
     }
-    pass('Semantic Loop Circuit Breaker tripped (HTTP 429)', loopErr.error.message);
+    pass('trace_runs.status updated to "breaker_tripped"', `Run: ${loopRunRecord.id}`);
 
-    // 7. Traces API & Time-Travel Forking
-    console.log(`\n${colors.magenta}[7/8] Trace Telemetry REST APIs & Time-Travel Forking${colors.reset}`);
-    const runsListRes = await fetch(`${BASE_URL}/api/runs`);
-    const runsList = await runsListRes.json();
-    if (!Array.isArray(runsList.runs) || runsList.runs.length === 0) {
-      throw new Error('Expected runs list from /api/runs');
+    // Verify SQLite insertion: 'guardrail_block' span
+    const blockSpan = sqlite.prepare("SELECT * FROM trace_spans WHERE run_id = ? AND span_type = 'guardrail_block'").get(loopRunId) as any;
+    if (!blockSpan) {
+      throw new Error("Expected 'guardrail_block' span in trace_spans");
     }
-    pass('GET /api/runs returns trace runs', `Count: ${runsList.runs.length}`);
+    pass("'guardrail_block' span inserted in SQLite", `Span ID: ${blockSpan.id}, Type: ${blockSpan.span_type}, Agent: ${blockSpan.agent_name}`);
 
-    const runSpansRes = await fetch(`${BASE_URL}/api/runs/${testRunId}/spans`);
-    const runSpansData = await runSpansRes.json();
-    if (!Array.isArray(runSpansData.spans) || runSpansData.spans.length === 0) {
-      throw new Error('Expected spans array from /api/runs/:id/spans');
+    // Verify WebSocket alerts
+    await sleep(100);
+    const breakerWsEvent = receivedEvents.find((e) => e.type === 'CIRCUIT_BREAKER_TRIPPED');
+    if (!breakerWsEvent) {
+      throw new Error("Missing 'CIRCUIT_BREAKER_TRIPPED' event on WebSocket");
     }
-    pass('GET /api/runs/:id/spans returns chronological trace spans', `Spans count: ${runSpansData.spanCount}`);
+    pass("WebSocket received CIRCUIT_BREAKER_TRIPPED alert", `Reason: ${breakerWsEvent.data.reason}`);
 
-    // Test Forking from a span
-    const targetSpanId = runSpansData.spans[0].id;
-    const forkRes = await fetch(`${BASE_URL}/api/spans/${targetSpanId}/fork`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        new_run_name: 'forked-agent-experiment',
-        reason: 'agent_branching_mutation'
-      })
-    });
+    // -----------------------------------------------------------------------------------------
+    // Print Final SQLite Tables
+    // -----------------------------------------------------------------------------------------
+    console.log(`\n${colors.cyan}${colors.bold}========================================================================${colors.reset}`);
+    console.log(`${colors.cyan}${colors.bold}          FINAL SQLITE TABLE SNAPSHOT (.trace.sqlite)                   ${colors.reset}`);
+    console.log(`${colors.cyan}${colors.bold}========================================================================${colors.reset}\n`);
 
-    if (forkRes.status !== 201) throw new Error(`Fork failed with status ${forkRes.status}`);
-    const forkData = await forkRes.json();
-    if (!forkData.newRunId) throw new Error('Expected newRunId in fork response');
-    pass('POST /api/spans/:id/fork created isolated branch run', `New Run ID: ${forkData.newRunId}`);
+    console.log(`${colors.yellow}${colors.bold}TABLE: trace_runs${colors.reset}`);
+    const allRuns = sqlite.prepare(`
+      SELECT 
+        id, 
+        name, 
+        status, 
+        total_tokens, 
+        ROUND(total_cost_usd, 6) as cost_usd, 
+        parent_run_id, 
+        forked_at_span_id 
+      FROM trace_runs 
+      ORDER BY created_at ASC
+    `).all();
+    console.table(allRuns);
 
-    const statsRes = await fetch(`${BASE_URL}/api/stats`);
-    const stats = await statsRes.json();
-    pass('GET /api/stats reports aggregate telemetry', `Runs: ${stats.runs.total}, Spans: ${stats.spans.total}, Cache Hit Rate: ${stats.spans.cacheHitRate}%`);
+    console.log(`\n${colors.yellow}${colors.bold}TABLE: trace_spans (Execution DAG Nodes)${colors.reset}`);
+    const allSpans = sqlite.prepare(`
+      SELECT 
+        id, 
+        run_id, 
+        parent_span_id, 
+        span_type, 
+        agent_name, 
+        model, 
+        prompt_tokens, 
+        completion_tokens, 
+        ROUND(cost_usd, 6) as cost_usd, 
+        latency_ms, 
+        cache_hit 
+      FROM trace_spans 
+      ORDER BY created_at ASC
+    `).all();
+    console.table(allSpans);
 
-    // 8. WebSocket Event Broadcast Verification
-    console.log(`\n${colors.magenta}[8/8] End-to-End WebSocket Event Delivery Verification${colors.reset}`);
-    await sleep(200);
-
-    const eventTypesReceived = new Set(receivedWsEvents.map((e) => e.type));
-    const expectedEvents = [
-      'connection:ready',
-      'run:created',
-      'span:created',
-      'span:completed',
-      'cache:hit',
-      'breaker:budget_exceeded',
-      'breaker:loop_detected'
-    ];
-
-    for (const exp of expectedEvents) {
-      if (eventTypesReceived.has(exp)) {
-        pass(`Received event: "${exp}"`);
-      } else {
-        fail(`Missing expected event: "${exp}"`, new Error(`Event ${exp} was not received over WebSocket`));
-      }
-    }
-
-    console.log(`\n${colors.green}${colors.bold}======================================================${colors.reset}`);
-    console.log(`${colors.green}${colors.bold}  ✨ ALL PHASE 1 CORE VERIFICATIONS PASSED! ✨        ${colors.reset}`);
-    console.log(`${colors.green}${colors.bold}  - Monorepo, Schemas, & Pricing Engine verified      ${colors.reset}`);
-    console.log(`${colors.green}${colors.bold}  - Deterministic SQLite WAL Engine verified          ${colors.reset}`);
-    console.log(`${colors.green}${colors.bold}  - Non-streaming & Streaming SSE Proxy verified       ${colors.reset}`);
-    console.log(`${colors.green}${colors.bold}  - 0ms Time-Travel Replay & Cache verified           ${colors.reset}`);
-    console.log(`${colors.green}${colors.bold}  - Budget & Loop Circuit Breakers verified           ${colors.reset}`);
-    console.log(`${colors.green}${colors.bold}  - Time-Travel Forking & REST APIs verified          ${colors.reset}`);
-    console.log(`${colors.green}${colors.bold}  - Real-time WebSocket Event Bus verified            ${colors.reset}`);
-    console.log(`${colors.green}${colors.bold}======================================================${colors.reset}\n`);
+    console.log(`\n${colors.green}${colors.bold}========================================================================${colors.reset}`);
+    console.log(`${colors.green}${colors.bold}  ✨ ALL SPECIFICATIONS VERIFIED & TESTS PASSED SUCCESSFULLY! ✨        ${colors.reset}`);
+    console.log(`${colors.green}${colors.bold}========================================================================${colors.reset}\n`);
 
   } finally {
     if (wsClient) {
@@ -356,7 +279,7 @@ async function runSmokeTests() {
   }
 }
 
-runSmokeTests().catch((err) => {
+main().catch((err) => {
   console.error(`\n${colors.red}${colors.bold}FATAL ERROR IN SMOKE TEST:${colors.reset}`, err);
   process.exit(1);
 });

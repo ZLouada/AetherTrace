@@ -22,7 +22,7 @@ tracesRouter.get('/runs', async (c) => {
 
   let query = db.select().from(trace_runs);
 
-  if (status && ['running', 'completed', 'failed'].includes(status)) {
+  if (status && ['running', 'paused', 'completed', 'failed', 'breaker_tripped'].includes(status)) {
     // @ts-ignore
     query = query.where(eq(trace_runs.status, status));
   }
@@ -62,7 +62,7 @@ tracesRouter.get('/runs/:id/spans', async (c) => {
     .select()
     .from(trace_spans)
     .where(eq(trace_spans.run_id, id))
-    .orderBy(asc(trace_spans.started_at))
+    .orderBy(asc(trace_spans.created_at))
     .all();
 
   return c.json({
@@ -89,7 +89,7 @@ tracesRouter.get('/spans/:id', async (c) => {
 
 /**
  * POST /api/spans/:id/fork - Time-Travel Replay Forking
- * Forks an execution history from a specific span point into a new isolated run
+ * Forks an execution DAG history from a specific span point into a new isolated run
  */
 tracesRouter.post('/spans/:id/fork', async (c) => {
   const { db } = getDatabase();
@@ -109,22 +109,15 @@ tracesRouter.post('/spans/:id/fork', async (c) => {
   const now = Date.now();
   const newRunName = body.new_run_name || `fork-${sourceRun?.name || 'run'}-${spanId.slice(0, 8)}`;
 
-  // 1. Create new run
+  // 1. Create new run with parent_run_id and forked_at_span_id
   const newRun: TraceRun = {
     id: newRunId,
     name: newRunName,
     status: 'running',
-    started_at: now,
-    ended_at: null,
-    total_cost: 0.0,
-    total_prompt_tokens: 0,
-    total_completion_tokens: 0,
-    metadata: JSON.stringify({
-      forkedFromRunId: sourceSpan.run_id,
-      forkedFromSpanId: spanId,
-      forkReason: body.reason || 'time_travel_replay',
-      ...(body.metadata || {})
-    }),
+    total_tokens: 0,
+    total_cost_usd: 0.0,
+    parent_run_id: sourceSpan.run_id,
+    forked_at_span_id: spanId,
     created_at: now
   };
 
@@ -134,51 +127,41 @@ tracesRouter.post('/spans/:id/fork', async (c) => {
   const priorSpans = db
     .select()
     .from(trace_spans)
-    .where(
-      and(
-        eq(trace_spans.run_id, sourceSpan.run_id),
-        eq(trace_spans.status, 'success')
-      )
-    )
-    .orderBy(asc(trace_spans.started_at))
+    .where(eq(trace_spans.run_id, sourceSpan.run_id))
+    .orderBy(asc(trace_spans.created_at))
     .all()
-    .filter((s) => s.started_at <= sourceSpan.started_at && s.id !== sourceSpan.id);
+    .filter((s) => s.created_at <= sourceSpan.created_at && s.id !== sourceSpan.id);
 
   let accumulatedCost = 0;
-  let accumulatedPromptTokens = 0;
-  let accumulatedCompletionTokens = 0;
+  let accumulatedTokens = 0;
 
   for (const s of priorSpans) {
-    const copiedSpanId = `span_fork_${randomUUID()}`;
+    const copiedSpanId = `span_${randomUUID()}`;
     const copiedSpan: TraceSpan = {
       ...s,
       id: copiedSpanId,
       run_id: newRunId,
-      is_cached: 1, // Marked as historical/replay in new branch
+      cache_hit: 1, // Marked as replay in new branch
       created_at: now
     };
     db.insert(trace_spans).values(copiedSpan).run();
 
-    accumulatedCost += s.cost || 0;
-    accumulatedPromptTokens += s.prompt_tokens || 0;
-    accumulatedCompletionTokens += s.completion_tokens || 0;
+    accumulatedCost += s.cost_usd || 0;
+    accumulatedTokens += (s.prompt_tokens || 0) + (s.completion_tokens || 0);
   }
 
-  // Update new run with copied token & cost aggregates
   db.update(trace_runs)
     .set({
-      total_cost: accumulatedCost,
-      total_prompt_tokens: accumulatedPromptTokens,
-      total_completion_tokens: accumulatedCompletionTokens
+      total_tokens: accumulatedTokens,
+      total_cost_usd: accumulatedCost
     })
     .where(eq(trace_runs.id, newRunId))
     .run();
 
   broadcastEvent({
-    type: 'run:created',
-    timestamp: now,
-    runId: newRunId,
-    data: newRun
+    type: 'RUN_CREATED',
+    data: newRun,
+    runId: newRunId
   });
 
   return c.json({
@@ -201,9 +184,8 @@ tracesRouter.get('/stats', async (c) => {
     .prepare(`
       SELECT 
         COUNT(*) as totalRuns,
-        SUM(total_cost) as totalCost,
-        SUM(total_prompt_tokens) as totalPromptTokens,
-        SUM(total_completion_tokens) as totalCompletionTokens
+        SUM(total_cost_usd) as totalCostUsd,
+        SUM(total_tokens) as totalTokens
       FROM trace_runs
     `)
     .get() as any;
@@ -212,7 +194,7 @@ tracesRouter.get('/stats', async (c) => {
     .prepare(`
       SELECT 
         COUNT(*) as totalSpans,
-        SUM(CASE WHEN is_cached = 1 THEN 1 ELSE 0 END) as cachedSpans,
+        SUM(CASE WHEN cache_hit = 1 THEN 1 ELSE 0 END) as cachedSpans,
         AVG(latency_ms) as avgLatencyMs
       FROM trace_spans
     `)
@@ -221,9 +203,8 @@ tracesRouter.get('/stats', async (c) => {
   return c.json({
     runs: {
       total: runStats?.totalRuns || 0,
-      totalCostUsd: Number((runStats?.totalCost || 0).toFixed(6)),
-      totalPromptTokens: runStats?.totalPromptTokens || 0,
-      totalCompletionTokens: runStats?.totalCompletionTokens || 0
+      totalCostUsd: Number((runStats?.totalCostUsd || 0).toFixed(6)),
+      totalTokens: runStats?.totalTokens || 0
     },
     spans: {
       total: spanStats?.totalSpans || 0,

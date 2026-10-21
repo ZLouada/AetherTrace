@@ -12,7 +12,7 @@ import {
   type TraceSpan
 } from '@aethertrace/core-schema';
 import { calculateCost } from '@aethertrace/pricing-engine';
-import { checkCircuitBreakers } from '../services/breaker.js';
+import { checkCircuitBreakers, tripCircuitBreaker } from '../services/breaker.js';
 import { lookupReplayCache, createReplayStreamChunks } from '../services/cache.js';
 import { broadcastEvent } from '../broadcaster.js';
 
@@ -21,6 +21,10 @@ export const proxyRouter = new Hono();
 function estimateTokens(text: string): number {
   if (!text) return 0;
   return Math.max(1, Math.ceil(text.length / 4));
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function generateMockResponse(body: any, id: string) {
@@ -78,46 +82,40 @@ async function handleChatCompletions(c: any) {
   const isStreaming = Boolean(reqBody.stream);
   const requestHash = computeRequestHash(reqBody);
 
-  // Extract metadata and tracing headers
+  // Extract headers
   const runId = c.req.header('x-run-id') || `run_${randomUUID()}`;
-  const runName = c.req.header('x-run-name') || 'default-session';
   const parentSpanId = c.req.header('x-parent-span-id') || null;
+  const agentName = c.req.header('x-agent-name') || 'default-agent';
   const maxBudgetHeader = c.req.header('x-max-budget-usd');
   const maxBudgetUsd = maxBudgetHeader ? Number.parseFloat(maxBudgetHeader) : undefined;
-  const bypassCache = c.req.header('x-replay-cache') === 'false';
-  const isMock = c.req.header('x-mock-response') === 'true' || process.env.AETHERTRACE_MOCK === 'true';
+  const isReplayMode = c.req.header('x-replay-mode') === 'true' || c.req.header('x-replay-cache') === 'true';
+  const isMockUpstream = c.req.header('x-mock-upstream') === 'true' || c.req.header('x-mock-response') === 'true' || process.env.AETHERTRACE_MOCK === 'true';
 
   const { db } = getDatabase();
 
-  // 1. Ensure Trace Run exists
+  // 1. Ensure Trace Run exists in SQLite
   const existingRuns = db.select().from(trace_runs).where(eq(trace_runs.id, runId)).limit(1).all();
   if (existingRuns.length === 0) {
     const newRun: TraceRun = {
       id: runId,
-      name: runName,
+      name: c.req.header('x-run-name') || `${agentName}-session`,
       status: 'running',
-      started_at: startTime,
-      ended_at: null,
-      total_cost: 0.0,
-      total_prompt_tokens: 0,
-      total_completion_tokens: 0,
-      metadata: JSON.stringify({
-        userAgent: c.req.header('user-agent'),
-        clientIp: c.req.header('x-forwarded-for') || 'local'
-      }),
+      total_tokens: 0,
+      total_cost_usd: 0.0,
+      parent_run_id: null,
+      forked_at_span_id: null,
       created_at: startTime
     };
     db.insert(trace_runs).values(newRun).run();
 
     broadcastEvent({
-      type: 'run:created',
-      timestamp: startTime,
-      runId,
-      data: newRun
+      type: 'RUN_CREATED',
+      data: newRun,
+      runId
     });
   }
 
-  // 2. Circuit Breaker Check
+  // 2. Circuit Breaker Check (breaker.ts)
   const breakerResult = await checkCircuitBreakers({
     runId,
     requestHash,
@@ -126,26 +124,29 @@ async function handleChatCompletions(c: any) {
   });
 
   if (!breakerResult.allowed) {
-    const eventType = breakerResult.type === 'budget_exceeded' ? 'breaker:budget_exceeded' : 'breaker:loop_detected';
-    broadcastEvent({
-      type: eventType,
-      timestamp: Date.now(),
+    // Trips breaker: updates trace_runs.status = 'breaker_tripped', inserts 'guardrail_block' span, broadcasts WS alert
+    const blockSpan = tripCircuitBreaker({
       runId,
-      data: breakerResult
+      parentSpanId,
+      agentName,
+      model: reqBody.model,
+      requestPayload: JSON.stringify(rawBody),
+      requestHash,
+      breakerResult
     });
 
     return c.json({
       error: {
         message: breakerResult.message,
-        type: 'circuit_breaker_error',
+        type: 'circuit_breaker_tripped',
         code: breakerResult.type,
         details: breakerResult.details
       }
     }, 429);
   }
 
-  // 3. Time-Travel Replay Cache Lookup
-  if (!bypassCache) {
+  // 3. Time-Travel Replay Cache Lookup (X-Replay-Mode: true)
+  if (isReplayMode) {
     const cachedSpan = lookupReplayCache(requestHash);
     if (cachedSpan && cachedSpan.response_payload) {
       let cachedResponse: any;
@@ -156,48 +157,35 @@ async function handleChatCompletions(c: any) {
       }
 
       if (cachedResponse) {
-        const replaySpanId = `span_replay_${randomUUID()}`;
+        const replaySpanId = `span_${randomUUID()}`;
         const now = Date.now();
 
-        // Record zero-cost cached span in trace history
+        // 0ms latency, $0.00 cost, cache_hit = 1
         const replaySpan: TraceSpan = {
           id: replaySpanId,
           run_id: runId,
           parent_span_id: parentSpanId,
-          name: 'chat_completion',
-          span_type: 'replay',
-          status: 'success',
-          request_hash: requestHash,
+          span_type: 'llm_call',
+          agent_name: agentName,
           model: reqBody.model,
-          prompt_tokens: cachedSpan.prompt_tokens || 0,
-          completion_tokens: cachedSpan.completion_tokens || 0,
-          cost: 0.0,
           request_payload: JSON.stringify(rawBody),
           response_payload: cachedSpan.response_payload,
+          prompt_tokens: cachedSpan.prompt_tokens || 0,
+          completion_tokens: cachedSpan.completion_tokens || 0,
+          cost_usd: 0.0,
           latency_ms: 0,
-          is_cached: 1,
-          error_message: null,
-          created_at: now,
-          started_at: now,
-          ended_at: now
+          cache_hit: 1,
+          request_hash: requestHash,
+          created_at: now
         };
 
         db.insert(trace_spans).values(replaySpan).run();
 
         broadcastEvent({
-          type: 'cache:hit',
-          timestamp: now,
+          type: 'SPAN_CREATED',
+          data: replaySpan,
           runId,
-          spanId: replaySpanId,
-          data: { requestHash, originalSpanId: cachedSpan.id }
-        });
-
-        broadcastEvent({
-          type: 'span:created',
-          timestamp: now,
-          runId,
-          spanId: replaySpanId,
-          data: replaySpan
+          spanId: replaySpanId
         });
 
         if (isStreaming) {
@@ -223,51 +211,26 @@ async function handleChatCompletions(c: any) {
     }
   }
 
-  // 4. Live Execution (Forward to Upstream or Mock Engine)
+  // 4. Upstream Execution (Mock or Real Upstream)
   const spanId = `span_${randomUUID()}`;
-  const initialSpan: TraceSpan = {
-    id: spanId,
-    run_id: runId,
-    parent_span_id: parentSpanId,
-    name: 'chat_completion',
-    span_type: 'llm',
-    status: 'running',
-    request_hash: requestHash,
-    model: reqBody.model,
-    prompt_tokens: 0,
-    completion_tokens: 0,
-    cost: 0.0,
-    request_payload: JSON.stringify(rawBody),
-    response_payload: null,
-    latency_ms: 0,
-    is_cached: 0,
-    error_message: null,
-    created_at: startTime,
-    started_at: startTime,
-    ended_at: null
-  };
+  const openaiBaseUrl = c.req.header('x-target-base-url') || process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
 
-  db.insert(trace_spans).values(initialSpan).run();
+  // Handle Mock Upstream with 150ms delay
+  if (isMockUpstream || !process.env.OPENAI_API_KEY && !c.req.header('authorization') && !c.req.header('x-target-base-url')) {
+    // Simulate realistic 150ms upstream network latency
+    await sleep(150);
 
-  broadcastEvent({
-    type: 'span:created',
-    timestamp: startTime,
-    runId,
-    spanId,
-    data: initialSpan
-  });
-
-  const upstreamBaseUrl = c.req.header('x-target-base-url') || process.env.UPSTREAM_BASE_URL;
-
-  // Handle Mock Execution when requested or if no upstream is configured
-  if (isMock || !upstreamBaseUrl) {
     const mockResponse = generateMockResponse(rawBody, spanId);
-    const latencyMs = Math.max(1, Date.now() - startTime);
+    const latencyMs = Math.max(150, Date.now() - startTime);
     const costResult = calculateCost(
       reqBody.model,
       mockResponse.usage.prompt_tokens,
       mockResponse.usage.completion_tokens
     );
+
+    const promptTokens = mockResponse.usage.prompt_tokens;
+    const completionTokens = mockResponse.usage.completion_tokens;
+    const totalTokens = promptTokens + completionTokens;
 
     if (isStreaming) {
       c.header('Content-Type', 'text/event-stream');
@@ -280,89 +243,87 @@ async function handleChatCompletions(c: any) {
           await stream.write(chunk);
         }
 
-        // Persist completed span
-        const endedAt = Date.now();
-        db.update(trace_spans)
-          .set({
-            status: 'success',
-            prompt_tokens: mockResponse.usage.prompt_tokens,
-            completion_tokens: mockResponse.usage.completion_tokens,
-            cost: costResult.totalCost,
-            response_payload: JSON.stringify(mockResponse),
-            latency_ms: Math.max(1, endedAt - startTime),
-            ended_at: endedAt
-          })
-          .where(eq(trace_spans.id, spanId))
-          .run();
+        const now = Date.now();
+        const span: TraceSpan = {
+          id: spanId,
+          run_id: runId,
+          parent_span_id: parentSpanId,
+          span_type: 'llm_call',
+          agent_name: agentName,
+          model: reqBody.model,
+          request_payload: JSON.stringify(rawBody),
+          response_payload: JSON.stringify(mockResponse),
+          prompt_tokens: promptTokens,
+          completion_tokens: completionTokens,
+          cost_usd: costResult.totalCost,
+          latency_ms: Math.max(150, now - startTime),
+          cache_hit: 0,
+          request_hash: requestHash,
+          created_at: now
+        };
 
-        // Update run aggregates
+        db.insert(trace_spans).values(span).run();
+
         const runs = db.select().from(trace_runs).where(eq(trace_runs.id, runId)).limit(1).all();
         if (runs.length > 0) {
           const run = runs[0];
           db.update(trace_runs)
             .set({
-              total_cost: run.total_cost + costResult.totalCost,
-              total_prompt_tokens: run.total_prompt_tokens + mockResponse.usage.prompt_tokens,
-              total_completion_tokens: run.total_completion_tokens + mockResponse.usage.completion_tokens
+              total_tokens: run.total_tokens + totalTokens,
+              total_cost_usd: run.total_cost_usd + costResult.totalCost
             })
             .where(eq(trace_runs.id, runId))
             .run();
         }
 
         broadcastEvent({
-          type: 'span:completed',
-          timestamp: endedAt,
+          type: 'SPAN_CREATED',
+          data: span,
           runId,
-          spanId,
-          data: {
-            id: spanId,
-            status: 'success',
-            cost: costResult.totalCost,
-            tokens: mockResponse.usage
-          }
+          spanId
         });
       });
     }
 
     // Non-Streaming Mock
-    const endedAt = Date.now();
-    db.update(trace_spans)
-      .set({
-        status: 'success',
-        prompt_tokens: mockResponse.usage.prompt_tokens,
-        completion_tokens: mockResponse.usage.completion_tokens,
-        cost: costResult.totalCost,
-        response_payload: JSON.stringify(mockResponse),
-        latency_ms: latencyMs,
-        ended_at: endedAt
-      })
-      .where(eq(trace_spans.id, spanId))
-      .run();
+    const now = Date.now();
+    const span: TraceSpan = {
+      id: spanId,
+      run_id: runId,
+      parent_span_id: parentSpanId,
+      span_type: 'llm_call',
+      agent_name: agentName,
+      model: reqBody.model,
+      request_payload: JSON.stringify(rawBody),
+      response_payload: JSON.stringify(mockResponse),
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      cost_usd: costResult.totalCost,
+      latency_ms: latencyMs,
+      cache_hit: 0,
+      request_hash: requestHash,
+      created_at: now
+    };
+
+    db.insert(trace_spans).values(span).run();
 
     const runs = db.select().from(trace_runs).where(eq(trace_runs.id, runId)).limit(1).all();
     if (runs.length > 0) {
       const run = runs[0];
       db.update(trace_runs)
         .set({
-          total_cost: run.total_cost + costResult.totalCost,
-          total_prompt_tokens: run.total_prompt_tokens + mockResponse.usage.prompt_tokens,
-          total_completion_tokens: run.total_completion_tokens + mockResponse.usage.completion_tokens
+          total_tokens: run.total_tokens + totalTokens,
+          total_cost_usd: run.total_cost_usd + costResult.totalCost
         })
         .where(eq(trace_runs.id, runId))
         .run();
     }
 
     broadcastEvent({
-      type: 'span:completed',
-      timestamp: endedAt,
+      type: 'SPAN_CREATED',
+      data: span,
       runId,
-      spanId,
-      data: {
-        id: spanId,
-        status: 'success',
-        cost: costResult.totalCost,
-        tokens: mockResponse.usage
-      }
+      spanId
     });
 
     return c.json(mockResponse, 200, {
@@ -372,8 +333,8 @@ async function handleChatCompletions(c: any) {
     });
   }
 
-  // 5. Upstream Real Provider Forwarding
-  const targetUrl = `${upstreamBaseUrl.replace(/\/$/, '')}/chat/completions`;
+  // 5. Forward to real upstream OPENAI_BASE_URL
+  const targetUrl = `${openaiBaseUrl.replace(/\/$/, '')}/chat/completions`;
   const forwardHeaders: Record<string, string> = {
     'Content-Type': 'application/json'
   };
@@ -392,23 +353,32 @@ async function handleChatCompletions(c: any) {
 
     if (!upstreamRes.ok) {
       const errorText = await upstreamRes.text();
-      const endedAt = Date.now();
-      db.update(trace_spans)
-        .set({
-          status: 'error',
-          error_message: errorText,
-          latency_ms: Math.max(1, endedAt - startTime),
-          ended_at: endedAt
-        })
-        .where(eq(trace_spans.id, spanId))
-        .run();
+      const now = Date.now();
+      const errSpan: TraceSpan = {
+        id: spanId,
+        run_id: runId,
+        parent_span_id: parentSpanId,
+        span_type: 'guardrail_block',
+        agent_name: agentName,
+        model: reqBody.model,
+        request_payload: JSON.stringify(rawBody),
+        response_payload: errorText,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        cost_usd: 0.0,
+        latency_ms: Math.max(1, now - startTime),
+        cache_hit: 0,
+        request_hash: requestHash,
+        created_at: now
+      };
+
+      db.insert(trace_spans).values(errSpan).run();
 
       broadcastEvent({
-        type: 'proxy:error',
-        timestamp: endedAt,
+        type: 'SPAN_CREATED',
+        data: errSpan,
         runId,
-        spanId,
-        data: { error: errorText, statusCode: upstreamRes.status }
+        spanId
       });
 
       return c.text(errorText, upstreamRes.status as any);
@@ -437,7 +407,6 @@ async function handleChatCompletions(c: any) {
             const textChunk = decoder.decode(value, { stream: true });
             await stream.write(textChunk);
 
-            // Parse SSE data to aggregate tokens & text
             const lines = textChunk.split('\n');
             for (const line of lines) {
               if (line.startsWith('data: ') && line !== 'data: [DONE]') {
@@ -463,7 +432,8 @@ async function handleChatCompletions(c: any) {
         }
 
         const costResult = calculateCost(reqBody.model, promptTokens, completionTokens);
-        const endedAt = Date.now();
+        const totalTokens = promptTokens + completionTokens;
+        const now = Date.now();
 
         const synthesizedResponse = {
           id: `chatcmpl-${spanId}`,
@@ -480,97 +450,98 @@ async function handleChatCompletions(c: any) {
           usage: {
             prompt_tokens: promptTokens,
             completion_tokens: completionTokens,
-            total_tokens: promptTokens + completionTokens
+            total_tokens: totalTokens
           }
         };
 
-        db.update(trace_spans)
-          .set({
-            status: 'success',
-            prompt_tokens: promptTokens,
-            completion_tokens: completionTokens,
-            cost: costResult.totalCost,
-            response_payload: JSON.stringify(synthesizedResponse),
-            latency_ms: Math.max(1, endedAt - startTime),
-            ended_at: endedAt
-          })
-          .where(eq(trace_spans.id, spanId))
-          .run();
+        const span: TraceSpan = {
+          id: spanId,
+          run_id: runId,
+          parent_span_id: parentSpanId,
+          span_type: 'llm_call',
+          agent_name: agentName,
+          model: reqBody.model,
+          request_payload: JSON.stringify(rawBody),
+          response_payload: JSON.stringify(synthesizedResponse),
+          prompt_tokens: promptTokens,
+          completion_tokens: completionTokens,
+          cost_usd: costResult.totalCost,
+          latency_ms: Math.max(1, now - startTime),
+          cache_hit: 0,
+          request_hash: requestHash,
+          created_at: now
+        };
+
+        db.insert(trace_spans).values(span).run();
 
         const runs = db.select().from(trace_runs).where(eq(trace_runs.id, runId)).limit(1).all();
         if (runs.length > 0) {
           const run = runs[0];
           db.update(trace_runs)
             .set({
-              total_cost: run.total_cost + costResult.totalCost,
-              total_prompt_tokens: run.total_prompt_tokens + promptTokens,
-              total_completion_tokens: run.total_completion_tokens + completionTokens
+              total_tokens: run.total_tokens + totalTokens,
+              total_cost_usd: run.total_cost_usd + costResult.totalCost
             })
             .where(eq(trace_runs.id, runId))
             .run();
         }
 
         broadcastEvent({
-          type: 'span:completed',
-          timestamp: endedAt,
+          type: 'SPAN_CREATED',
+          data: span,
           runId,
-          spanId,
-          data: {
-            id: spanId,
-            status: 'success',
-            cost: costResult.totalCost,
-            tokens: { prompt_tokens: promptTokens, completion_tokens: completionTokens }
-          }
+          spanId
         });
       });
     }
 
     // Non-streaming upstream response
     const upstreamJson: any = await upstreamRes.json();
-    const endedAt = Date.now();
-    const latencyMs = Math.max(1, endedAt - startTime);
+    const now = Date.now();
+    const latencyMs = Math.max(1, now - startTime);
 
     const promptTokens = upstreamJson.usage?.prompt_tokens ?? estimateTokens(JSON.stringify(rawBody.messages || []));
     const completionTokens = upstreamJson.usage?.completion_tokens ?? estimateTokens(upstreamJson.choices?.[0]?.message?.content || '');
+    const totalTokens = promptTokens + completionTokens;
     const costResult = calculateCost(reqBody.model, promptTokens, completionTokens);
 
-    db.update(trace_spans)
-      .set({
-        status: 'success',
-        prompt_tokens: promptTokens,
-        completion_tokens: completionTokens,
-        cost: costResult.totalCost,
-        response_payload: JSON.stringify(upstreamJson),
-        latency_ms: latencyMs,
-        ended_at: endedAt
-      })
-      .where(eq(trace_spans.id, spanId))
-      .run();
+    const span: TraceSpan = {
+      id: spanId,
+      run_id: runId,
+      parent_span_id: parentSpanId,
+      span_type: 'llm_call',
+      agent_name: agentName,
+      model: reqBody.model,
+      request_payload: JSON.stringify(rawBody),
+      response_payload: JSON.stringify(upstreamJson),
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      cost_usd: costResult.totalCost,
+      latency_ms: latencyMs,
+      cache_hit: 0,
+      request_hash: requestHash,
+      created_at: now
+    };
+
+    db.insert(trace_spans).values(span).run();
 
     const runs = db.select().from(trace_runs).where(eq(trace_runs.id, runId)).limit(1).all();
     if (runs.length > 0) {
       const run = runs[0];
       db.update(trace_runs)
         .set({
-          total_cost: run.total_cost + costResult.totalCost,
-          total_prompt_tokens: run.total_prompt_tokens + promptTokens,
-          total_completion_tokens: run.total_completion_tokens + completionTokens
+          total_tokens: run.total_tokens + totalTokens,
+          total_cost_usd: run.total_cost_usd + costResult.totalCost
         })
         .where(eq(trace_runs.id, runId))
         .run();
     }
 
     broadcastEvent({
-      type: 'span:completed',
-      timestamp: endedAt,
+      type: 'SPAN_CREATED',
+      data: span,
       runId,
-      spanId,
-      data: {
-        id: spanId,
-        status: 'success',
-        cost: costResult.totalCost,
-        tokens: upstreamJson.usage
-      }
+      spanId
     });
 
     return c.json(upstreamJson, 200, {
@@ -579,23 +550,32 @@ async function handleChatCompletions(c: any) {
       'X-AetherTrace-Latency': `${latencyMs}ms`
     });
   } catch (err: any) {
-    const endedAt = Date.now();
-    db.update(trace_spans)
-      .set({
-        status: 'error',
-        error_message: err.message,
-        latency_ms: Math.max(1, endedAt - startTime),
-        ended_at: endedAt
-      })
-      .where(eq(trace_spans.id, spanId))
-      .run();
+    const now = Date.now();
+    const errSpan: TraceSpan = {
+      id: spanId,
+      run_id: runId,
+      parent_span_id: parentSpanId,
+      span_type: 'guardrail_block',
+      agent_name: agentName,
+      model: reqBody.model,
+      request_payload: JSON.stringify(rawBody),
+      response_payload: JSON.stringify({ error: err.message }),
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      cost_usd: 0.0,
+      latency_ms: Math.max(1, now - startTime),
+      cache_hit: 0,
+      request_hash: requestHash,
+      created_at: now
+    };
+
+    db.insert(trace_spans).values(errSpan).run();
 
     broadcastEvent({
-      type: 'proxy:error',
-      timestamp: endedAt,
+      type: 'SPAN_CREATED',
+      data: errSpan,
       runId,
-      spanId,
-      data: { error: err.message }
+      spanId
     });
 
     return c.json({

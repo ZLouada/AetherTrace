@@ -62,13 +62,11 @@ export type ChatCompletionRequest = z.infer<typeof ChatCompletionRequestSchema>;
 export const TraceRunZodSchema = z.object({
   id: z.string(),
   name: z.string(),
-  status: z.enum(['running', 'completed', 'failed']),
-  started_at: z.number(),
-  ended_at: z.number().nullable().optional(),
-  total_cost: z.number(),
-  total_prompt_tokens: z.number(),
-  total_completion_tokens: z.number(),
-  metadata: z.string().nullable().optional(),
+  status: z.enum(['running', 'paused', 'completed', 'failed', 'breaker_tripped']),
+  total_tokens: z.number(),
+  total_cost_usd: z.number(),
+  parent_run_id: z.string().nullable().optional(),
+  forked_at_span_id: z.string().nullable().optional(),
   created_at: z.number()
 });
 
@@ -76,22 +74,18 @@ export const TraceSpanZodSchema = z.object({
   id: z.string(),
   run_id: z.string(),
   parent_span_id: z.string().nullable().optional(),
-  name: z.string(),
-  span_type: z.enum(['llm', 'tool', 'chain', 'agent', 'replay']),
-  status: z.enum(['running', 'success', 'error']),
-  request_hash: z.string(),
+  span_type: z.enum(['llm_call', 'tool_call', 'agent_state', 'guardrail_block']),
+  agent_name: z.string(),
   model: z.string().nullable().optional(),
   prompt_tokens: z.number().nullable().optional(),
   completion_tokens: z.number().nullable().optional(),
-  cost: z.number().nullable().optional(),
+  cost_usd: z.number().nullable().optional(),
+  latency_ms: z.number().nullable().optional(),
+  cache_hit: z.number(),
   request_payload: z.string().nullable().optional(),
   response_payload: z.string().nullable().optional(),
-  latency_ms: z.number().nullable().optional(),
-  is_cached: z.number(),
-  error_message: z.string().nullable().optional(),
-  created_at: z.number(),
-  started_at: z.number(),
-  ended_at: z.number().nullable().optional()
+  request_hash: z.string(),
+  created_at: z.number()
 });
 
 export const ForkSpanRequestSchema = z.object({
@@ -106,40 +100,27 @@ export type ForkSpanRequest = z.infer<typeof ForkSpanRequestSchema>;
 // --- WebSocket Event Schemas & Types ---
 
 export type WebSocketEventType =
-  | 'run:created'
-  | 'run:updated'
-  | 'run:completed'
-  | 'span:created'
-  | 'span:updated'
-  | 'span:completed'
-  | 'breaker:budget_exceeded'
-  | 'breaker:loop_detected'
-  | 'cache:hit'
-  | 'proxy:error';
+  | 'SPAN_CREATED'
+  | 'SPAN_UPDATED'
+  | 'RUN_CREATED'
+  | 'RUN_UPDATED'
+  | 'CIRCUIT_BREAKER_TRIPPED'
+  | 'CACHE_HIT'
+  | 'CONNECTION_READY'
+  | 'PROMPT_ERROR';
 
 export interface WebSocketEvent<T = any> {
-  type: WebSocketEventType;
-  timestamp: number;
+  type: string;
+  data: T;
+  timestamp?: number;
   runId?: string;
   spanId?: string;
-  data: T;
 }
 
 export const WebSocketEventSchema = z.object({
-  type: z.enum([
-    'run:created',
-    'run:updated',
-    'run:completed',
-    'span:created',
-    'span:updated',
-    'span:completed',
-    'breaker:budget_exceeded',
-    'breaker:loop_detected',
-    'cache:hit',
-    'proxy:error'
-  ]),
-  timestamp: z.number(),
+  type: z.string(),
+  data: z.any(),
+  timestamp: z.number().optional(),
   runId: z.string().optional(),
-  spanId: z.string().optional(),
-  data: z.any()
+  spanId: z.string().optional()
 });

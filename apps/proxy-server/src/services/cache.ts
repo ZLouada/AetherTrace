@@ -15,7 +15,6 @@ export function lookupReplayCache(requestHash: string): TraceSpan | null {
     .where(
       and(
         eq(trace_spans.request_hash, requestHash),
-        eq(trace_spans.status, 'success'),
         isNotNull(trace_spans.response_payload)
       )
     )
