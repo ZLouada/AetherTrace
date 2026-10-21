@@ -87,12 +87,13 @@ async function runSmokeTests() {
 
     // 3. Non-Streaming Chat Completion Proxy + Trace Persistence
     console.log(`\n${colors.magenta}[3/8] Non-Streaming Proxy Interception & SQLite Persistence${colors.reset}`);
-    const testRunId = `run_test_${Date.now()}`;
+    const promptSeed = Date.now();
+    const testRunId = `run_test_${promptSeed}`;
     const payload1 = {
       model: 'gpt-4o',
       messages: [
         { role: 'system', content: 'You are an autonomous network security agent.' },
-        { role: 'user', content: 'Inspect packet header TCP SYN 192.168.1.100:443' }
+        { role: 'user', content: `Inspect packet header TCP SYN 192.168.1.100:443 [Seed:${promptSeed}]` }
       ],
       temperature: 0.2
     };
@@ -162,7 +163,7 @@ async function runSmokeTests() {
     const payloadStream = {
       model: 'claude-3-5-sonnet-20241022',
       messages: [
-        { role: 'user', content: 'Stream high-frequency agent tool trace output' }
+        { role: 'user', content: `Stream high-frequency agent tool trace output [Seed:${promptSeed}]` }
       ],
       stream: true
     };
@@ -238,7 +239,7 @@ async function runSmokeTests() {
     const loopRunId = `run_loop_${Date.now()}`;
     const loopPayload = {
       model: 'gpt-4o-mini',
-      messages: [{ role: 'user', content: 'Agent recursive call identical prompt' }]
+      messages: [{ role: 'user', content: `Agent recursive call identical prompt [Seed:${promptSeed}]` }]
     };
 
     // Send 1st and 2nd
