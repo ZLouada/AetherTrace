@@ -95,3 +95,36 @@ export async function postChatCompletion(payload: any, customHeaders: Record<str
   const data = await res.json();
   return { ok: res.ok, status: res.status, data };
 }
+
+export async function exportRun(runId: string): Promise<any> {
+  const res = await fetch(`${API_BASE}/api/runs/${runId}/export`, { cache: 'no-store' });
+  if (!res.ok) throw new Error(`Failed to export run ${runId}`);
+  const bundle = await res.json();
+
+  if (typeof window !== 'undefined') {
+    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `run_${runId}.trace.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  return bundle;
+}
+
+export async function importRun(bundle: any): Promise<{ success: boolean; runId: string; spanCount: number; run: TraceRun }> {
+  const res = await fetch(`${API_BASE}/api/runs/import`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(bundle)
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err?.error?.message || `Failed to import trace`);
+  }
+  return res.json();
+}

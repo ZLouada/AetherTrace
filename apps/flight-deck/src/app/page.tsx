@@ -10,6 +10,8 @@ import {
   fetchRunSpans,
   fetchStats,
   postChatCompletion,
+  exportRun,
+  importRun,
   WS_BASE,
   type TraceRun,
   type TraceSpan,
@@ -261,6 +263,29 @@ export default function FlightDeckPage() {
     }
   };
 
+  const handleExportTrace = async () => {
+    if (!selectedRunId) return;
+    try {
+      await exportRun(selectedRunId);
+    } catch (err: any) {
+      alert(`Export failed: ${err.message}`);
+    }
+  };
+
+  const handleImportTrace = async (file: File) => {
+    try {
+      const text = await file.text();
+      const bundle = JSON.parse(text);
+      const result = await importRun(bundle);
+      await loadRuns(result.runId);
+      setSelectedRunId(result.runId);
+      await loadSpansForRun(result.runId);
+      await loadStats();
+    } catch (err: any) {
+      alert(`Import failed: ${err.message}`);
+    }
+  };
+
   const selectedRun = runs.find((r) => r.id === selectedRunId) || null;
 
   return (
@@ -272,6 +297,9 @@ export default function FlightDeckPage() {
         onRefreshStats={loadStats}
         onRunSimulation={handleRunSimulation}
         isSimulating={isSimulating}
+        selectedRunId={selectedRunId}
+        onExportTrace={handleExportTrace}
+        onImportTrace={handleImportTrace}
       />
 
       {/* 3-Pane Flight Deck Body */}

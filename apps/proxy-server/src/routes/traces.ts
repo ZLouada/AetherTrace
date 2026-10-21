@@ -73,6 +73,120 @@ tracesRouter.get('/runs/:id/spans', async (c) => {
 });
 
 /**
+ * GET /api/runs/:id/export - Export a self-contained portable .trace.json bundle (Wireshark .pcap equivalent)
+ */
+tracesRouter.get('/runs/:id/export', async (c) => {
+  const { db } = getDatabase();
+  const id = c.req.param('id');
+
+  const runs = db.select().from(trace_runs).where(eq(trace_runs.id, id)).limit(1).all();
+  if (runs.length === 0) {
+    return c.json({ error: { message: `Run '${id}' not found` } }, 404);
+  }
+
+  const spans = db
+    .select()
+    .from(trace_spans)
+    .where(eq(trace_spans.run_id, id))
+    .orderBy(asc(trace_spans.created_at))
+    .all();
+
+  const bundle = {
+    version: '1.0',
+    exported_at: Date.now(),
+    run: runs[0],
+    spans
+  };
+
+  c.header('Content-Disposition', `attachment; filename="run_${id}.trace.json"`);
+  c.header('Content-Type', 'application/json');
+  return c.json(bundle);
+});
+
+/**
+ * POST /api/runs/import - Safely import and upsert a portable .trace.json bundle into local SQLite
+ */
+tracesRouter.post('/runs/import', async (c) => {
+  const { db, sqlite } = getDatabase();
+
+  let body: any;
+  try {
+    body = await c.req.json();
+  } catch (err) {
+    return c.json({ error: { message: 'Invalid JSON payload in import request' } }, 400);
+  }
+
+  const runData = body.run || body;
+  const spansData = body.spans || [];
+
+  if (!runData || !runData.id) {
+    return c.json({ error: { message: 'Import payload must contain a valid run object with an id' } }, 400);
+  }
+
+  const targetRunId = body.run_id_override || runData.id;
+  const now = Date.now();
+
+  const preparedRun: TraceRun = {
+    id: targetRunId,
+    name: body.run_name_override || runData.name || 'imported-run',
+    status: runData.status || 'completed',
+    total_tokens: runData.total_tokens || 0,
+    total_cost_usd: runData.total_cost_usd || 0.0,
+    parent_run_id: runData.parent_run_id || null,
+    forked_at_span_id: runData.forked_at_span_id || null,
+    created_at: runData.created_at || now
+  };
+
+  // Perform atomic import transaction
+  const importTx = sqlite.transaction(() => {
+    // Delete existing run if conflicting to allow safe re-import / overwrite
+    sqlite.prepare('DELETE FROM trace_spans WHERE run_id = ?').run(targetRunId);
+    sqlite.prepare('DELETE FROM trace_runs WHERE id = ?').run(targetRunId);
+
+    // Insert run
+    db.insert(trace_runs).values(preparedRun).run();
+
+    // Insert spans
+    for (const rawSpan of spansData) {
+      const span: TraceSpan = {
+        id: targetRunId !== runData.id ? `span_imp_${randomUUID()}` : rawSpan.id,
+        run_id: targetRunId,
+        parent_span_id: rawSpan.parent_span_id || null,
+        span_type: rawSpan.span_type || 'llm_call',
+        agent_name: rawSpan.agent_name || 'default-agent',
+        model: rawSpan.model || null,
+        request_payload: rawSpan.request_payload || null,
+        response_payload: rawSpan.response_payload || null,
+        prompt_tokens: rawSpan.prompt_tokens || 0,
+        completion_tokens: rawSpan.completion_tokens || 0,
+        cost_usd: rawSpan.cost_usd || 0.0,
+        latency_ms: rawSpan.latency_ms || 0,
+        cache_hit: rawSpan.cache_hit || 0,
+        request_hash: rawSpan.request_hash || 'unknown',
+        created_at: rawSpan.created_at || now
+      };
+      db.insert(trace_spans).values(span).run();
+    }
+  });
+
+  importTx();
+
+  broadcastEvent({
+    type: 'RUN_CREATED',
+    data: preparedRun,
+    runId: targetRunId
+  });
+
+  return c.json({
+    success: true,
+    message: `Trace '${preparedRun.name}' (${targetRunId}) imported successfully`,
+    runId: targetRunId,
+    spanCount: spansData.length,
+    run: preparedRun
+  }, 201);
+});
+
+/**
  * GET /api/spans/:id - Get a single span
  */
 tracesRouter.get('/spans/:id', async (c) => {

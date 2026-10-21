@@ -1,0 +1,22 @@
+{
+  "name": "@aethertrace/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "aethertrace": "./dist/bin.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "check-types": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aethertrace/core-schema": "workspace:*",
+    "@aethertrace/pricing-engine": "workspace:*",
+    "@aethertrace/proxy-server": "workspace:*",
+    "drizzle-orm": "^0.39.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}

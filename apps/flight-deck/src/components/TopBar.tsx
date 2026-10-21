@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef } from 'react';
 import {
   Activity,
   Play,
@@ -8,7 +8,9 @@ import {
   Database,
   Radio,
   RefreshCw,
-  Loader2
+  Loader2,
+  Upload,
+  Download
 } from 'lucide-react';
 import type { GlobalStats } from '@/lib/api';
 
@@ -18,6 +20,9 @@ interface TopBarProps {
   onRefreshStats: () => void;
   onRunSimulation: () => Promise<void>;
   isSimulating: boolean;
+  selectedRunId: string | null;
+  onExportTrace: () => void;
+  onImportTrace: (file: File) => void;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -25,8 +30,12 @@ export const TopBar: React.FC<TopBarProps> = ({
   stats,
   onRefreshStats,
   onRunSimulation,
-  isSimulating
+  isSimulating,
+  selectedRunId,
+  onExportTrace,
+  onImportTrace
 }) => {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   return (
     <header className="h-16 border-b border-gray-800 bg-[#0b0f1a] px-5 flex items-center justify-between shrink-0 select-none">
       {/* Brand Identity */}
@@ -110,6 +119,46 @@ export const TopBar: React.FC<TopBarProps> = ({
             {wsConnected ? 'LIVE FEED (4000)' : 'OFFLINE'}
           </span>
         </div>
+
+        {/* Hidden File Input for .trace.json Import */}
+        <input
+          type="file"
+          ref={fileInputRef}
+          accept=".json,.trace.json"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) {
+              onImportTrace(file);
+              e.target.value = '';
+            }
+          }}
+        />
+
+        {/* Import .trace Button */}
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-medium text-gray-300 bg-[#111827] hover:bg-gray-800 border border-gray-700/80 transition-all hover:text-white"
+          title="Import a portable .trace.json bundle into local SQLite"
+        >
+          <Upload className="w-3.5 h-3.5 text-cyan-400" />
+          <span>Import .trace</span>
+        </button>
+
+        {/* Export .trace Button */}
+        <button
+          onClick={onExportTrace}
+          disabled={!selectedRunId}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono font-medium border transition-all ${
+            selectedRunId
+              ? 'text-gray-300 bg-[#111827] hover:bg-gray-800 border-gray-700/80 hover:text-white cursor-pointer'
+              : 'text-gray-600 bg-gray-900 border-gray-800 cursor-not-allowed'
+          }`}
+          title={selectedRunId ? `Export ${selectedRunId} as .trace.json` : 'Select a run to export'}
+        >
+          <Download className="w-3.5 h-3.5 text-purple-400" />
+          <span>Export .trace</span>
+        </button>
 
         {/* Simulate Multi-Agent Run Button */}
         <button
