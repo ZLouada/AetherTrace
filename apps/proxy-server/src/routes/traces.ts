@@ -20,12 +20,14 @@ import {
   indexSpan,
   indexRun,
   DEFAULT_LIMITS,
+  analyzeExecutionIntelligence,
   type TraceRun,
   type TraceSpan,
   type RunDiffResult,
   type SpanMutation,
   type RunProvenance,
-  type ProvenanceComparisonResult
+  type ProvenanceComparisonResult,
+  type ExecutionIntelligence
 } from '@aethertrace/core-schema';
 
 import { broadcastEvent } from '../broadcaster.js';
@@ -1298,6 +1300,34 @@ tracesRouter.get('/runs/:id/lineage', async (c) => {
     descendants,
     lineage,
     mutations
+  });
+});
+
+/**
+ * GET /api/runs/:id/intelligence - Deterministic Agent Intelligence analysis
+ */
+tracesRouter.get('/runs/:id/intelligence', async (c) => {
+  const { db } = getDatabase();
+  const id = c.req.param('id');
+
+  const runs = db.select().from(trace_runs).where(eq(trace_runs.id, id)).limit(1).all();
+  if (runs.length === 0) {
+    return c.json({ error: { message: `Run '${id}' not found` } }, 404);
+  }
+
+  const spans = db
+    .select()
+    .from(trace_spans)
+    .where(eq(trace_spans.run_id, id))
+    .orderBy(asc(trace_spans.created_at))
+    .all();
+
+  const intelligence = analyzeExecutionIntelligence(spans, runs[0]);
+
+  return c.json({
+    success: true,
+    runId: id,
+    intelligence
   });
 });
 

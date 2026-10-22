@@ -731,4 +731,110 @@ export function getRunLineage(
   return { ancestors, current, descendants };
 }
 
+// --- Phase 12: Replay & Experiment Studio Types ---
 
+export type ExperimentStatus =
+  | 'draft'
+  | 'queued'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+export type ReplayMode =
+  | 'cache_only'
+  | 'live_replay'
+  | 'mock_mutated';
+
+export type MutationType =
+  | 'prompt'
+  | 'model'
+  | 'tool_args'
+  | 'mock_tool'
+  | 'custom_payload';
+
+export interface ExperimentMutation {
+  type: MutationType;
+  target_span_id: string;
+  field: string;
+  original_value: any;
+  new_value: any;
+  metadata?: Record<string, any>;
+}
+
+export interface ExperimentSummary {
+  id: string;
+  name: string;
+  description?: string | null;
+  source_run_id: string;
+  source_run_name?: string;
+  status: ExperimentStatus;
+  variant_count: number;
+  completed_variant_count: number;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface ExperimentWithVariants {
+  id: string;
+  name: string;
+  description?: string | null;
+  source_run_id: string;
+  status: ExperimentStatus;
+  metadata?: string | null;
+  created_at: number;
+  updated_at: number;
+  sourceRun?: TraceRun | null;
+  variants: any[]; // ExperimentVariant[]
+}
+
+export interface MultiVariantScorecardItem {
+  variantId: string;
+  variantName: string;
+  status: ExperimentStatus;
+  replayRunId?: string | null;
+  costUsd: number;
+  costSavingsPercent: number;
+  costDeltaUsd: number;
+  durationMs: number;
+  durationDeltaMs: number;
+  tokenCount: number;
+  tokenDelta: number;
+  spanCount: number;
+  mutationCount: number;
+  mutations: ExperimentMutation[];
+  cacheHitPercent: number;
+  criticalPathDurationMs?: number;
+  slowestToolName?: string | null;
+}
+
+export interface MultiVariantComparisonResult {
+  experimentId: string;
+  experimentName: string;
+  sourceRun: {
+    id: string;
+    name: string;
+    costUsd: number;
+    durationMs: number;
+    tokenCount: number;
+    spanCount: number;
+  };
+  scorecard: MultiVariantScorecardItem[];
+  diffsAgainstSource: Record<string, RunDiffResult>;
+}
+
+export interface ReplayHistoryItem {
+  id: string;
+  variantId: string;
+  variantName: string;
+  experimentId: string;
+  experimentName: string;
+  sourceRunId: string;
+  replayRunId: string;
+  status: ExperimentStatus;
+  durationMs: number;
+  costUsd: number;
+  tokens: number;
+  mutationsCount: number;
+  timestamp: number;
+}

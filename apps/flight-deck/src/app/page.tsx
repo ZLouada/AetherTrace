@@ -10,6 +10,8 @@ import { CommandPalette } from '@/components/CommandPalette';
 import { ChaosModal } from '@/components/ChaosModal';
 import { DiffArenaModal } from '@/components/DiffArenaModal';
 import { BreakpointModal } from '@/components/BreakpointModal';
+import { ExperimentStudio } from '@/components/ExperimentStudio';
+import { EvaluationPanel } from '@/components/EvaluationPanel';
 import {
   fetchRuns,
   fetchRunSpans,
@@ -25,6 +27,8 @@ import {
   replaySpan,
   pauseRun,
   resumeRun,
+  fetchRunIntelligence,
+  getWsBase,
   WS_BASE,
   type TraceRun,
   type TraceSpan,
@@ -32,7 +36,9 @@ import {
   type BreakpointConfig,
   type PendingBreakpoint,
   type BreakpointResolution,
-  type ChaosConfig
+  type ChaosConfig,
+  type ExecutionIntelligence,
+  type AgentSummary
 } from '@/lib/api';
 
 export default function FlightDeckPage() {
@@ -45,6 +51,13 @@ export default function FlightDeckPage() {
   const [isLoadingRuns, setIsLoadingRuns] = useState<boolean>(true);
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
   const [dagDirection, setDagDirection] = useState<'TB' | 'LR'>('TB');
+
+  // Agent Intelligence State (Phase 11)
+  const [intelligence, setIntelligence] = useState<ExecutionIntelligence | null>(null);
+  const [selectedAgent, setSelectedAgent] = useState<AgentSummary | null>(null);
+  const [collapsedAgentNames, setCollapsedAgentNames] = useState<Set<string>>(new Set());
+  const [isCriticalPathFocused, setIsCriticalPathFocused] = useState<boolean>(false);
+  const [activeFilter, setActiveFilter] = useState<string>('all');
 
   // Debugger Panel States
   const [isTimelineOpen, setIsTimelineOpen] = useState<boolean>(true);
@@ -61,6 +74,12 @@ export default function FlightDeckPage() {
   const [isDiffModalOpen, setIsDiffModalOpen] = useState<boolean>(false);
   const [diffBaseId, setDiffBaseId] = useState<string | null>(null);
   const [diffTargetId, setDiffTargetId] = useState<string | null>(null);
+
+  // Experiment Studio State (Phase 12)
+  const [isExperimentStudioOpen, setIsExperimentStudioOpen] = useState<boolean>(false);
+
+  // Evaluation & Optimization Studio State (Phase 13)
+  const [isEvaluationPanelOpen, setIsEvaluationPanelOpen] = useState<boolean>(false);
 
   const selectedRunIdRef = useRef<string | null>(null);
   selectedRunIdRef.current = selectedRunId;
@@ -131,6 +150,47 @@ export default function FlightDeckPage() {
     }
   }, []);
 
+  const loadIntelligence = useCallback(async (runId: string) => {
+    try {
+      const data = await fetchRunIntelligence(runId);
+      setIntelligence(data);
+    } catch (err) {
+      console.error(`[FlightDeck] Failed to load intelligence for ${runId}:`, err);
+      setIntelligence(null);
+    }
+  }, []);
+
+  const handleToggleCollapseAgent = useCallback((agentName: string) => {
+    setCollapsedAgentNames((prev) => {
+      const next = new Set(prev);
+      if (next.has(agentName)) {
+        next.delete(agentName);
+      } else {
+        next.add(agentName);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleExpandAllAgents = useCallback(() => {
+    setCollapsedAgentNames(new Set());
+  }, []);
+
+  const handleCollapseAllAgents = useCallback(() => {
+    if (intelligence?.agents) {
+      setCollapsedAgentNames(new Set(intelligence.agents.map((a) => a.agentName)));
+    }
+  }, [intelligence]);
+
+  const handleToggleCriticalPathFocus = useCallback(() => {
+    setIsCriticalPathFocused((prev) => !prev);
+  }, []);
+
+  const criticalPathSpanIds = React.useMemo(() => {
+    if (!intelligence?.criticalPath?.spanIds) return undefined;
+    return new Set<string>(intelligence.criticalPath.spanIds);
+  }, [intelligence]);
+
   useEffect(() => {
     loadRuns();
     loadStats();
@@ -141,11 +201,14 @@ export default function FlightDeckPage() {
   useEffect(() => {
     if (selectedRunId) {
       loadSpansForRun(selectedRunId);
+      loadIntelligence(selectedRunId);
     } else {
       setSpans([]);
       setSelectedSpan(null);
+      setIntelligence(null);
+      setSelectedAgent(null);
     }
-  }, [selectedRunId, loadSpansForRun]);
+  }, [selectedRunId, loadSpansForRun, loadIntelligence]);
 
   // 3. Real-Time WebSocket Telemetry Connection
   useEffect(() => {
@@ -154,7 +217,7 @@ export default function FlightDeckPage() {
 
     const connectWebSocket = () => {
       try {
-        ws = new WebSocket(WS_BASE);
+        ws = new WebSocket(getWsBase());
 
         ws.onopen = () => {
           setWsConnected(true);
@@ -197,9 +260,10 @@ export default function FlightDeckPage() {
               loadChaosConfig();
             }
 
-            // If event belongs to currently active run, reload spans immediately
+            // If event belongs to currently active run, reload spans & intelligence immediately
             if (targetRunId && targetRunId === selectedRunIdRef.current) {
               loadSpansForRun(targetRunId);
+              loadIntelligence(targetRunId);
             }
           } catch {}
         };
@@ -225,7 +289,7 @@ export default function FlightDeckPage() {
       clearTimeout(reconnectTimeout);
       if (ws) ws.close();
     };
-  }, [loadStats, loadSpansForRun, loadBreakpoints, loadChaosConfig]);
+  }, [loadStats, loadSpansForRun, loadIntelligence, loadBreakpoints, loadChaosConfig]);
 
   // 4. Global Keyboard Shortcuts Listener
   useEffect(() => {
@@ -257,6 +321,14 @@ export default function FlightDeckPage() {
         }
         if (isDiffModalOpen) {
           setIsDiffModalOpen(false);
+          return;
+        }
+        if (isExperimentStudioOpen) {
+          setIsExperimentStudioOpen(false);
+          return;
+        }
+        if (isEvaluationPanelOpen) {
+          setIsEvaluationPanelOpen(false);
           return;
         }
         if (selectedSpan) {
@@ -293,9 +365,13 @@ export default function FlightDeckPage() {
           e.preventDefault();
           setIsChaosModalOpen(true);
           break;
+        case 'x':
+          e.preventDefault();
+          setIsExperimentStudioOpen(true);
+          break;
         case 'e':
           e.preventDefault();
-          handleExportTrace();
+          setIsEvaluationPanelOpen((p) => !p);
           break;
         case ' ': // Space: Pause / Resume current run
           e.preventDefault();
@@ -335,6 +411,7 @@ export default function FlightDeckPage() {
     isCommandPaletteOpen,
     isChaosModalOpen,
     isDiffModalOpen,
+    isExperimentStudioOpen,
     selectedSpan,
     spans,
     selectedRunId,
@@ -568,6 +645,8 @@ export default function FlightDeckPage() {
         chaosConfig={chaosConfig}
         onOpenChaosModal={() => setIsChaosModalOpen(true)}
         onOpenDiffModal={() => handleOpenDiffModal()}
+        onOpenExperimentStudio={() => setIsExperimentStudioOpen(true)}
+        onOpenEvaluationPanel={() => setIsEvaluationPanelOpen(true)}
         onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
         onToggleTimeline={() => setIsTimelineOpen((p) => !p)}
         isTimelineOpen={isTimelineOpen}
@@ -597,17 +676,43 @@ export default function FlightDeckPage() {
           selectedRun={selectedRun}
           spans={spans}
           selectedSpanId={selectedSpan?.id || null}
-          onSelectSpan={(span) => setSelectedSpan(span)}
+          onSelectSpan={(span) => {
+            setSelectedSpan(span);
+            setSelectedAgent(null);
+          }}
           direction={dagDirection}
           onToggleDirection={() => setDagDirection((d) => (d === 'TB' ? 'LR' : 'TB'))}
+          intelligence={intelligence}
+          collapsedAgentNames={collapsedAgentNames}
+          onToggleCollapseAgent={handleToggleCollapseAgent}
+          onExpandAllAgents={handleExpandAllAgents}
+          onCollapseAllAgents={handleCollapseAllAgents}
+          isCriticalPathFocused={isCriticalPathFocused}
+          onToggleCriticalPathFocus={handleToggleCriticalPathFocus}
+          activeFilter={activeFilter}
+          onSelectFilter={setActiveFilter}
+          onSelectAgentGroup={(agent) => {
+            setSelectedAgent(agent);
+            setSelectedSpan(null);
+            setCollapsedAgentNames((prev) => {
+              const next = new Set(prev);
+              next.delete(agent.agentName);
+              return next;
+            });
+          }}
         />
 
         {/* Right Pane: Upgraded Event Inspector & Fork IDE */}
-        {selectedSpan && (
+        {(selectedSpan || selectedAgent) && (
           <InspectorDrawer
             span={selectedSpan}
+            selectedAgent={selectedAgent}
+            intelligence={intelligence}
             run={selectedRun}
-            onClose={() => setSelectedSpan(null)}
+            onClose={() => {
+              setSelectedSpan(null);
+              setSelectedAgent(null);
+            }}
             onForkSuccess={(newRunId) => {
               loadRuns(newRunId);
               setSelectedRunId(newRunId);
@@ -618,13 +723,23 @@ export default function FlightDeckPage() {
             }}
             onSelectParentSpan={(parentSpanId) => {
               const p = spans.find((s) => s.id === parentSpanId);
-              if (p) setSelectedSpan(p);
+              if (p) {
+                setSelectedSpan(p);
+                setSelectedAgent(null);
+              }
             }}
-            isHeldBreakpoint={pendingBreakpoints.some((p) => p.spanId === selectedSpan.id)}
+            onSelectSpan={(spanId) => {
+              const s = spans.find((item) => item.id === spanId);
+              if (s) {
+                setSelectedSpan(s);
+                setSelectedAgent(null);
+              }
+            }}
+            isHeldBreakpoint={Boolean(selectedSpan && pendingBreakpoints.some((p) => p.spanId === selectedSpan.id))}
             onResolveBreakpoint={handleResolveBreakpoint}
             onToggleAgentBreakpoint={handleToggleAgentBreakpoint}
             isAgentBreakpointed={Boolean(
-              breakpointConfig?.matchAgentNames.includes(selectedSpan.agent_name)
+              selectedSpan && breakpointConfig?.matchAgentNames.includes(selectedSpan.agent_name)
             )}
           />
         )}
@@ -634,10 +749,14 @@ export default function FlightDeckPage() {
       <Timeline
         spans={spans}
         selectedSpanId={selectedSpan?.id || null}
-        onSelectSpan={(span) => setSelectedSpan(span)}
+        onSelectSpan={(span) => {
+          setSelectedSpan(span);
+          setSelectedAgent(null);
+        }}
         isOpen={isTimelineOpen}
         onToggleOpen={() => setIsTimelineOpen((p) => !p)}
         selectedRun={selectedRun}
+        criticalPathSpanIds={criticalPathSpanIds}
       />
 
       {/* Lightweight Command Palette (Cmd+K) */}
@@ -685,7 +804,13 @@ export default function FlightDeckPage() {
         onToggleTimeline={() => setIsTimelineOpen((p) => !p)}
         onOpenDiffModal={() => handleOpenDiffModal()}
         onOpenChaosModal={() => setIsChaosModalOpen(true)}
+        onOpenExperimentStudio={() => setIsExperimentStudioOpen(true)}
+        onOpenEvaluationPanel={() => setIsEvaluationPanelOpen(true)}
         onExportTrace={() => handleExportTrace()}
+        onToggleCriticalPathFocus={handleToggleCriticalPathFocus}
+        onCollapseAllAgents={handleCollapseAllAgents}
+        onExpandAllAgents={handleExpandAllAgents}
+        onSelectFilter={setActiveFilter}
       />
 
       {/* Chaos Engineering Modal */}
@@ -716,6 +841,34 @@ export default function FlightDeckPage() {
         }}
         onRefresh={loadBreakpoints}
       />
+
+      {/* Replay & Experiment Studio Modal (Phase 12) */}
+      <ExperimentStudio
+        isOpen={isExperimentStudioOpen}
+        onClose={() => setIsExperimentStudioOpen(false)}
+        runs={runs}
+        selectedRunId={selectedRunId}
+        onSelectRun={(runId) => {
+          setSelectedRunId(runId);
+          setSelectedSpan(null);
+          loadSpansForRun(runId);
+        }}
+        onOpenDiffModal={(baseId, targetId) => handleOpenDiffModal(baseId, targetId)}
+      />
+
+      {/* Evaluation & Optimization Studio Modal (Phase 13) */}
+      <EvaluationPanel
+        isOpen={isEvaluationPanelOpen}
+        onClose={() => setIsEvaluationPanelOpen(false)}
+        selectedRun={runs.find((r) => r.id === selectedRunId) || null}
+        runs={runs}
+        onSelectSpan={(spanId) => {
+          const target = spans.find((s) => s.id === spanId);
+          if (target) setSelectedSpan(target);
+        }}
+        onOpenDiffModal={(baseId, targetId) => handleOpenDiffModal(baseId, targetId)}
+      />
     </div>
   );
 }
+

@@ -6,13 +6,13 @@ export const FORBIDDEN_PROPERTY_NAMES = new Set([
   '__proto__',
   'constructor',
   'prototype',
-  'globalThis',
+  'globalthis',
   'process',
   'require',
   'import',
   'eval',
-  'Function',
-  'mainModule',
+  'function',
+  'mainmodule',
   'binding'
 ]);
 

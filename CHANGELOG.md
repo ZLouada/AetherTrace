@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.0] - 2026-10-22
+
+### Added
+- **Phase 11: Agent Intelligence Engine**
+  - **Deterministic Agent Understanding:** 100% mathematical, local-first intelligence with zero external LLMs, zero cloud dependencies, and zero `eval`.
+  - **Agent & Sub-Agent Hierarchies:** $O(N)$ single-pass grouping, parent-child agent linking, nesting depth derivation, and token/cost/tool/retry aggregation.
+  - **Tool Chains:** Coherent step-by-step grouping of tool invocations, inputs, results, durations, and retry outcomes.
+  - **Parallel Execution Groups:** Concurrency detection using strict temporal overlap ($\max(s_1, s_2) < \min(e_1, e_2)$) with zero-recursion bottom-up propagation, slowest branch isolation, and synchronization span identification.
+  - **Retry Chains & Failure Hotspots:** Root failed span linkage, attempt sequence tracing, and calculation of `mostRetriedOperation`, `mostFailedTool`, and financial retry cost impact.
+  - **Critical Path Dynamic Programming:** $O(V+E)$ longest dependency path algorithm using typed arrays (`Float64Array`, `Int32Array`) to isolate runtime bottlenecks and percentage contributions.
+  - **Causal Taxonomy:** Strict tri-part classification (`CAUSAL`, `STRUCTURAL`, `TEMPORAL`) separating operational triggers from parent containment and sequential execution.
+  - **Proxy Server API:** `GET /api/runs/:id/intelligence` exposing structured intelligence payloads with instant in-memory LRU caching for completed runs.
+  - **Flight Deck Visual Intelligence:** Interactive `AgentGroupNode` containers, collapsible agent hierarchies, glowing Critical Path highlight with filter toggle, and causal context in the Inspector Drawer.
+  - **CLI Inspection Briefing:** `aethertrace inspect <run_id>` formatting complete agent hierarchy trees, critical path bottlenecks, tool chains, parallel groups, and failure hotspots.
+  - **10k-Span Scalability:** Verified performance of 100 spans in 2.31ms, 1,000 spans in 19.25ms, and 10,000 spans in 233.51ms.
+
+- **Phase 12: Replay & Experiment Studio**
+  - **Persistent Experiments & Variants:** Full CRUD and SQLite persistence (`experiments`, `experiment_variants`) managing multi-variant execution branching from any baseline run.
+  - **Topological Prefix Caching:** Preserves unmutated ancestor spans prior to the fork point at $0.00 spend and 0ms duration (`execution_origin: 'cached_replay'`).
+  - **Mutation Studio:** Deterministic mutation types (`prompt`, `model`, `tool_args`, `mock_tool`) with automatic price recalculation via `@aethertrace/pricing-engine`.
+  - **Bounded Concurrency Worker Pool:** Concurrent batch variant replay pool capped at limit 2, preventing local resource starvation.
+  - **Failure Isolation:** Sandboxed variant execution where syntax, tool, or runtime errors in one variant do not cancel sibling branches.
+  - **Multi-Variant Comparison Scorecards:** Sub-10ms ($9.65\text{ms}$ avg) analytical scorecards comparing tokens, latency, cost deltas %, duration deltas %, and node-level semantic DAG diffs.
+  - **Flight Deck Experiment Studio:** 3-tab modal (`Variants & Mutations`, `Comparison Matrix`, `Replay History`), global shortcut `X`, `⌘K` palette integration, and one-click Diff Arena launcher.
+  - **CLI Experiment Suite:** `aethertrace experiment` commands (`list`, `create`, `inspect`, `variant-add`, `run`, `compare`) for terminal-first experiment management.
+- **Phase 13: Evaluation & Optimization Engine**
+  - **Deterministic Local Evaluation Engine:** 100% mathematical, local-first assertion evaluation with zero external LLMs, zero cloud dependencies, and zero `eval()`. Average evaluation runtime <3ms (2.99ms benchmarked).
+  - **Zero-Eval Assertion DSL & CI Regression Gate:** Safe, sandbox-enforced assertion language supporting operators (`==`, `!=`, `<`, `<=`, `>`, `>=`, `contains`, `not_contains`, `exists`, `not_exists`), domain aliases (`duration_ms`, `total_tokens`, `total_cost`, `reliability_score`, `has_errors`), and tool presence checks (`tool "<name>" must exist`). Command-line gate `aethertrace evaluate assert` with deterministic exit codes (`0` = pass, `1` = fail, `2` = error).
+  - **Precise Failure Localization & Structured Evidence:** Failed assertions map directly to offending span IDs, capturing metric name, actual value, expected threshold, comparison operator, and evidence descriptions.
+  - **Deterministic Error Clustering & Secret Redaction:** Normalizes dynamic variables (`<IP>`, `:<PORT>`, `<NUM>`, `<UUID>`, `<PATH>`, `<TIMESTAMP>`) into canonical cluster fingerprints with first/last seen timestamps and culprit span links, while auto-redacting API keys and passwords.
+  - **Causal Root-Cause Analyzer:** Traverses causal and parent-child lineage to separate primary triggers from cascading downstream retries, timeouts, and fallback errors.
+  - **Actionable Optimization Signals:** 5 polymorphic heuristics detecting cost hotspots (expensive models/spans), critical path latency bottlenecks, retry hotspots, prompt token bloat, and sequential tool parallelism opportunities with quantified savings.
+  - **Continuous Run Regression Evaluator:** Comparative regression checks between runs, variants, or experiments computing assertion deltas, score changes, metric diffs, and newly introduced failure regressions.
+  - **Proxy Server REST API:** `/api/evaluations` endpoints (`POST /run`, `GET /`, `GET /:id`, `GET /target/:type/:id`, `DELETE /:id`, `GET /:id/export?format=json|markdown`).
+  - **Flight Deck Evaluation Studio:** 5-tab evaluation studio modal (`Overview & Metrics`, `Assertions`, `Root Cause & Errors`, `Optimization Signals`, `Evaluation History`), global shortcut `E`, command palette action (`⌘K`), clickable span deep-linking, real-time DSL rule builder, and one-click JSON/Markdown report export.
+  - **CLI Evaluation Suite:** `aethertrace evaluate` commands (`list`, `run`, `assert`, `inspect`, `failures`, `errors`, `optimize`, `compare`, `export`).
+
+---
+
+
+
 ## [0.1.0] - 2026-10-22
 
 ### Added

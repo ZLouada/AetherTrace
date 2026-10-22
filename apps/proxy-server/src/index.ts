@@ -7,6 +7,8 @@ import { proxyRouter } from './routes/proxy.js';
 import { tracesRouter } from './routes/traces.js';
 import { controlRouter } from './routes/control.js';
 import { searchRouter } from './routes/search.js';
+import { experimentsRouter } from './routes/experiments.js';
+import { evaluationsRouter } from './routes/evaluations.js';
 import { registerClient, unregisterClient, getClientCount, broadcastEvent } from './broadcaster.js';
 import {
   getDatabase,
@@ -44,6 +46,13 @@ app.use('*', cors({
     }
     // Allow any localhost/127.0.0.1 port for local agent development
     if (/^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/i.test(origin)) {
+      return origin;
+    }
+    // Allow Vercel preview and production domains
+    if (process.env.VERCEL_URL && origin.includes(process.env.VERCEL_URL)) {
+      return origin;
+    }
+    if (/^https:\/\/[a-zA-Z0-9_.-]+\.vercel\.app$/i.test(origin)) {
       return origin;
     }
     return null; // Deny untrusted remote origins
@@ -204,6 +213,8 @@ app.get('/api/security/audit', (c) => {
 app.route('/', proxyRouter);
 app.route('/api', tracesRouter);
 app.route('/api', controlRouter);
+app.route('/api', experimentsRouter);
+app.route('/api/evaluations', evaluationsRouter);
 app.route('/api/search', searchRouter);
 
 // Global Error Handler (Sanitizes internal server details)
@@ -216,6 +227,8 @@ app.onError((err, c) => {
     }
   }, 500);
 });
+
+export { executeVariantReplay } from './routes/experiments.js';
 
 export function startServer(port: number = Number(process.env.PORT) || 4000) {
   // Ensure DB initialized & schema migrated
@@ -323,3 +336,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 }
 
 export { broadcastEvent };
+export default app;

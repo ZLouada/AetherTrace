@@ -1,18 +1,40 @@
 import dagre from 'dagre';
 import type { Node, Edge } from '@xyflow/react';
-import type { TraceSpan } from '@/lib/api';
+import type { TraceSpan, AgentSummary } from '@/lib/api';
 
 export const NODE_WIDTH = 320;
 export const NODE_HEIGHT = 175;
+export const GROUP_NODE_WIDTH = 340;
+export const GROUP_NODE_HEIGHT = 160;
+
+export interface LayoutOptions {
+  direction?: 'TB' | 'LR';
+  criticalPathSpanIds?: Set<string>;
+  isCriticalPathFocused?: boolean;
+  collapsedAgentNames?: Set<string>;
+  agentSummaries?: Map<string, AgentSummary>;
+  onExpandAgent?: (agentName: string) => void;
+}
 
 export function getLayoutedElements(
   spans: TraceSpan[],
   selectedSpanId?: string | null,
-  direction: 'TB' | 'LR' = 'TB'
+  options: 'TB' | 'LR' | LayoutOptions = 'TB'
 ): { nodes: Node[]; edges: Edge[] } {
   if (!spans || spans.length === 0) {
     return { nodes: [], edges: [] };
   }
+
+  const opts: LayoutOptions =
+    typeof options === 'string'
+      ? { direction: options }
+      : options || { direction: 'TB' };
+
+  const direction = opts.direction || 'TB';
+  const criticalPathSpanIds = opts.criticalPathSpanIds;
+  const isCriticalPathFocused = Boolean(opts.isCriticalPathFocused);
+  const collapsedAgentNames = opts.collapsedAgentNames || new Set<string>();
+  const agentSummaries = opts.agentSummaries || new Map<string, AgentSummary>();
 
   const dagreGraph = new dagre.graphlib.Graph();
   dagreGraph.setDefaultEdgeLabel(() => ({}));
@@ -24,53 +46,140 @@ export function getLayoutedElements(
     marginy: 40
   });
 
-  // Construct edges: if parent_span_id is provided, connect from parent -> span.
-  // If parent_span_id is null and this is not the root span (index > 0), fallback to chaining from preceding span.
-  const spanIdSet = new Set(spans.map((s) => s.id));
-  const rawEdges: { source: string; target: string; isBranch: boolean }[] = [];
+  // Map each span ID to its node ID (which might be a group ID if the agent is collapsed)
+  const spanToNodeId = new Map<string, string>();
+  const renderedNodesMap = new Map<string, Node>();
+  const renderedSpans: TraceSpan[] = [];
 
-  for (let i = 0; i < spans.length; i++) {
-    const span = spans[i];
-    if (span.parent_span_id && spanIdSet.has(span.parent_span_id)) {
-      rawEdges.push({
-        source: span.parent_span_id,
-        target: span.id,
-        isBranch: true
-      });
-    } else if (i > 0) {
-      // Connect to immediate prior span for sequential execution continuity
-      rawEdges.push({
-        source: spans[i - 1].id,
-        target: span.id,
-        isBranch: false
+  for (const s of spans) {
+    const agent = s.agent_name || 'default-agent';
+    if (collapsedAgentNames.has(agent)) {
+      const groupId = `group_${agent}`;
+      spanToNodeId.set(s.id, groupId);
+
+      if (!renderedNodesMap.has(groupId)) {
+        const summary = agentSummaries.get(agent) || {
+          agentName: agent,
+          parentAgentName: null,
+          depth: 0,
+          spanCount: 1,
+          durationMs: 0,
+          status: 'completed',
+          startTime: s.created_at,
+          endTime: s.created_at,
+          childAgentCount: 0,
+          toolCallCount: 0,
+          llmCallCount: 0,
+          retryCount: 0,
+          errorCount: 0,
+          totalCostUsd: 0,
+          totalTokens: 0,
+          spanIds: [s.id]
+        };
+
+        renderedNodesMap.set(groupId, {
+          id: groupId,
+          type: 'agentGroupNode',
+          data: {
+            agent: summary,
+            isSelected: false,
+            onExpand: opts.onExpandAgent
+          },
+          position: { x: 0, y: 0 }
+        });
+      }
+    } else {
+      spanToNodeId.set(s.id, s.id);
+      renderedSpans.push(s);
+      renderedNodesMap.set(s.id, {
+        id: s.id,
+        type: 'spanNode',
+        data: {
+          span: s,
+          isSelected: s.id === selectedSpanId,
+          isCriticalPath: criticalPathSpanIds?.has(s.id),
+          isSubdued: isCriticalPathFocused && !criticalPathSpanIds?.has(s.id)
+        },
+        position: { x: 0, y: 0 }
       });
     }
   }
 
-  const nodes: Node[] = spans.map((span) => ({
-    id: span.id,
-    type: 'spanNode',
-    data: {
-      span,
-      isSelected: span.id === selectedSpanId
-    },
-    position: { x: 0, y: 0 }
-  }));
+  // Construct raw edges and map to effective node IDs
+  const rawEdgesSet = new Set<string>();
+  const rawEdges: { source: string; target: string; isBranch: boolean; isCritical: boolean }[] = [];
 
-  const edges: Edge[] = rawEdges.map((e, idx) => ({
-    id: `e-${e.source}-${e.target}-${idx}`,
-    source: e.source,
-    target: e.target,
-    type: 'smoothstep',
-    animated: true,
-    style: {
-      stroke: e.isBranch ? '#ffffff' : '#52525b',
-      strokeWidth: 2
+  for (let i = 0; i < spans.length; i++) {
+    const span = spans[i];
+    const targetNodeId = spanToNodeId.get(span.id)!;
+
+    let sourceSpanId: string | null = null;
+    let isBranch = false;
+
+    if (span.parent_span_id && spanToNodeId.has(span.parent_span_id)) {
+      sourceSpanId = span.parent_span_id;
+      isBranch = true;
+    } else if (i > 0) {
+      sourceSpanId = spans[i - 1].id;
+      isBranch = false;
     }
-  }));
+
+    if (sourceSpanId) {
+      const sourceNodeId = spanToNodeId.get(sourceSpanId)!;
+      // Do not create self-loops inside a collapsed group
+      if (sourceNodeId !== targetNodeId) {
+        const edgeKey = `${sourceNodeId}->${targetNodeId}`;
+        if (!rawEdgesSet.has(edgeKey)) {
+          rawEdgesSet.add(edgeKey);
+          const isCritical = Boolean(
+            criticalPathSpanIds?.has(sourceSpanId) && criticalPathSpanIds?.has(span.id)
+          );
+          rawEdges.push({
+            source: sourceNodeId,
+            target: targetNodeId,
+            isBranch,
+            isCritical
+          });
+        }
+      }
+    }
+  }
+
+  const nodes = Array.from(renderedNodesMap.values());
+
+  const edges: Edge[] = rawEdges.map((e, idx) => {
+    let stroke = e.isBranch ? '#ffffff' : '#52525b';
+    let strokeWidth = 2;
+    let opacity = 1.0;
+
+    if (e.isCritical) {
+      stroke = '#f59e0b';
+      strokeWidth = 3;
+    } else if (isCriticalPathFocused) {
+      stroke = '#27272a';
+      strokeWidth = 1;
+      opacity = 0.25;
+    }
+
+    return {
+      id: `e-${e.source}-${e.target}-${idx}`,
+      source: e.source,
+      target: e.target,
+      type: 'smoothstep',
+      animated: e.isCritical || e.isBranch,
+      style: {
+        stroke,
+        strokeWidth,
+        opacity
+      }
+    };
+  });
 
   nodes.forEach((node) => {
-    dagreGraph.setNode(node.id, { width: NODE_WIDTH, height: NODE_HEIGHT });
+    const isGroup = node.type === 'agentGroupNode';
+    const w = isGroup ? GROUP_NODE_WIDTH : NODE_WIDTH;
+    const h = isGroup ? GROUP_NODE_HEIGHT : NODE_HEIGHT;
+    dagreGraph.setNode(node.id, { width: w, height: h });
   });
 
   edges.forEach((edge) => {
@@ -81,11 +190,14 @@ export function getLayoutedElements(
 
   const layoutedNodes: Node[] = nodes.map((node) => {
     const pos = dagreGraph.node(node.id);
+    const isGroup = node.type === 'agentGroupNode';
+    const w = isGroup ? GROUP_NODE_WIDTH : NODE_WIDTH;
+    const h = isGroup ? GROUP_NODE_HEIGHT : NODE_HEIGHT;
     return {
       ...node,
       position: {
-        x: pos.x - NODE_WIDTH / 2,
-        y: pos.y - NODE_HEIGHT / 2
+        x: (pos?.x ?? 0) - w / 2,
+        y: (pos?.y ?? 0) - h / 2
       }
     };
   });

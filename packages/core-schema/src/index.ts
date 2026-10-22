@@ -6,3 +6,6 @@ export * from './diff.js';
 export * from './provenance.js';
 export * from './security/index.js';
 export * from './search/index.js';
+export * from './intelligence/index.js';
+export * from './experiments.js';
+export * from './evaluation/index.js';

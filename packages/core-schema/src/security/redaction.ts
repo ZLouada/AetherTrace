@@ -158,6 +158,7 @@ export function redactString(text: string): string {
 }
 
 export const redactText = redactString;
+export const redactSensitiveData = redactString;
 
 /**
  * Recursively inspects and redacts any JS value (primitives, arrays, objects).

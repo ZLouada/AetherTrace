@@ -22,6 +22,18 @@ export interface TraceRunOptions {
 const traceStorage = new AsyncLocalStorage<TraceContext>();
 
 /**
+ * Resolves default proxy URL from environment variables, supporting Vercel service bindings.
+ */
+export function getDefaultProxyUrl(): string {
+  if (typeof process !== 'undefined' && process.env) {
+    if (process.env.PROXY_SERVER_URL) return process.env.PROXY_SERVER_URL;
+    if (process.env.AETHERTRACE_URL) return process.env.AETHERTRACE_URL;
+    if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  }
+  return 'http://localhost:4000';
+}
+
+/**
  * Returns the currently active trace context if executing within a traceRun or traceAgent scope.
  */
 export function getTraceContext(): TraceContext | undefined {
@@ -160,15 +172,16 @@ export async function emitSpan(
     latencyMs?: number;
     usageStatus?: 'reported' | 'estimated' | 'unavailable';
   },
-  proxyBaseUrl: string = 'http://localhost:4000'
+  proxyBaseUrl?: string
 ): Promise<{ spanId: string; runId: string } | null> {
+  const resolvedProxyUrl = proxyBaseUrl || getDefaultProxyUrl();
   const ctx = getTraceContext();
   const runId = spanData.runId || ctx?.runId || `run_${randomUUID()}`;
   const parentSpanId = spanData.parentSpanId !== undefined ? spanData.parentSpanId : (ctx?.parentSpanId || null);
   const agentName = spanData.agentName || ctx?.agentName || 'default-agent';
 
   try {
-    const res = await fetch(`${proxyBaseUrl.replace(/\/$/, '')}/api/spans`, {
+    const res = await fetch(`${resolvedProxyUrl.replace(/\/$/, '')}/api/spans`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -206,7 +219,7 @@ export async function traceTool<T>(
   options?: TraceSpanOptions
 ): Promise<T> {
   const startTime = Date.now();
-  const proxyUrl = options?.proxyBaseUrl || 'http://localhost:4000';
+  const proxyUrl = options?.proxyBaseUrl || getDefaultProxyUrl();
 
   try {
     const result = await fn();
@@ -245,7 +258,7 @@ export async function traceHttp<T>(
   options?: TraceSpanOptions
 ): Promise<T> {
   const startTime = Date.now();
-  const proxyUrl = options?.proxyBaseUrl || 'http://localhost:4000';
+  const proxyUrl = options?.proxyBaseUrl || getDefaultProxyUrl();
 
   try {
     const result = await fn();
@@ -280,7 +293,7 @@ export async function traceRetry<T>(
   options?: TraceSpanOptions
 ): Promise<T> {
   const startTime = Date.now();
-  const proxyUrl = options?.proxyBaseUrl || 'http://localhost:4000';
+  const proxyUrl = options?.proxyBaseUrl || getDefaultProxyUrl();
   const retrySpanId = `span_retry_${randomUUID()}`;
 
   const current = getTraceContext();
@@ -339,8 +352,9 @@ export async function withSpan<T>(spanId: string, fn: () => Promise<T>): Promise
 /**
  * Creates an enhanced global fetch that automatically injects AetherTrace propagation headers.
  */
-export function createTracedFetch(proxyBaseUrl: string = 'http://localhost:4000'): typeof fetch {
-  const cleanBase = proxyBaseUrl.replace(/\/$/, '');
+export function createTracedFetch(proxyBaseUrl?: string): typeof fetch {
+  const base = proxyBaseUrl || getDefaultProxyUrl();
+  const cleanBase = base.replace(/\/$/, '');
 
   return async function tracedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
     let urlString = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
@@ -377,17 +391,18 @@ export function wrapOpenAI<T extends { baseURL?: string; customFetch?: any }>(
   client: T,
   options: { proxyBaseUrl?: string } = {}
 ): T {
-  const proxyUrl = options.proxyBaseUrl || 'http://localhost:4000/v1';
+  const defaultBase = getDefaultProxyUrl().replace(/\/$/, '');
+  const proxyUrl = options.proxyBaseUrl || `${defaultBase}/v1`;
   client.baseURL = proxyUrl;
-  client.customFetch = createTracedFetch(options.proxyBaseUrl || 'http://localhost:4000');
+  client.customFetch = createTracedFetch(options.proxyBaseUrl || getDefaultProxyUrl());
   return client;
 }
 
 export class AetherTraceClient {
   public proxyBaseUrl: string;
 
-  constructor(proxyBaseUrl: string = 'http://localhost:4000') {
-    this.proxyBaseUrl = proxyBaseUrl;
+  constructor(proxyBaseUrl?: string) {
+    this.proxyBaseUrl = proxyBaseUrl || getDefaultProxyUrl();
   }
 
   public traceRun<T>(name: string, options: TraceRunOptions, fn: () => Promise<T>): Promise<T> {

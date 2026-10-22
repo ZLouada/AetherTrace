@@ -24,6 +24,7 @@ interface TimelineProps {
   isOpen: boolean;
   onToggleOpen: () => void;
   selectedRun: TraceRun | null;
+  criticalPathSpanIds?: Set<string>;
 }
 
 export const Timeline: React.FC<TimelineProps> = ({
@@ -32,7 +33,8 @@ export const Timeline: React.FC<TimelineProps> = ({
   onSelectSpan,
   isOpen,
   onToggleOpen,
-  selectedRun
+  selectedRun,
+  criticalPathSpanIds
 }) => {
   // Compute time offsets and duration
   const { sortedSpans, minTime, maxTime, totalDurationMs } = useMemo(() => {
@@ -176,6 +178,12 @@ export const Timeline: React.FC<TimelineProps> = ({
                           : 'bg-[#064e3b] text-[#6ee7b7] border-[#059669]'
                       }`}>
                         {originBadge}
+                      </span>
+                    )}
+                    {criticalPathSpanIds?.has(span.id) && (
+                      <span className="text-[9px] px-1 py-0.2 rounded bg-amber-950/60 text-amber-300 border border-amber-600/50 font-mono font-bold flex items-center gap-0.5">
+                        <Zap className="w-2.5 h-2.5 fill-amber-400" />
+                        CRITICAL
                       </span>
                     )}
                     <span className="text-[10px] text-zinc-500 truncate">({typeLabel})</span>

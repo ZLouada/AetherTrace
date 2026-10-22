@@ -23,10 +23,12 @@ import { Badge, getCategoryStyle } from '@/design-system';
 export interface SpanNodeData {
   span: TraceSpan;
   isSelected?: boolean;
+  isCriticalPath?: boolean;
+  isSubdued?: boolean;
 }
 
 export const SpanNode = memo(({ data }: { data: SpanNodeData }) => {
-  const { span, isSelected } = data;
+  const { span, isSelected, isCriticalPath, isSubdued } = data;
 
   const isCacheHit = span.cache_hit === 1;
   const isBreaker = span.span_type === 'guardrail_block';
@@ -117,12 +119,16 @@ export const SpanNode = memo(({ data }: { data: SpanNodeData }) => {
   return (
     <div
       className={`relative w-[320px] rounded border transition-all duration-150 bg-[#111114] shadow-md overflow-hidden font-mono ${
+        isSubdued ? 'opacity-30' : 'opacity-100'
+      } ${
         isIntercepted
           ? 'border-amber-400 ring-1 ring-amber-500/60 shadow-[0_0_12px_rgba(245,158,11,0.25)]'
           : isBreaker
           ? 'border-red-500 shadow-[0_0_12px_rgba(239,68,68,0.25)]'
           : isSelected
           ? 'border-zinc-200 ring-1 ring-zinc-400/50 bg-[#17171b] shadow-lg'
+          : isCriticalPath
+          ? 'border-amber-400/80 shadow-[0_0_10px_rgba(245,158,11,0.15)] bg-[#141310]'
           : 'border-[#2c2c32] hover:border-[#3f3f48]'
       }`}
     >
@@ -233,6 +239,12 @@ export const SpanNode = memo(({ data }: { data: SpanNodeData }) => {
               <AlertOctagon className="w-2.5 h-2.5 text-rose-400 mr-0.5" />
               Breaker
             </Badge>
+          )}
+
+          {isCriticalPath && (
+            <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[10px] text-amber-300 bg-amber-950/60 border border-amber-500/50">
+              ⚡ Critical
+            </span>
           )}
         </div>
       </div>

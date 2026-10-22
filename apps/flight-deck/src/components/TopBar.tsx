@@ -15,7 +15,9 @@ import {
   Sliders,
   ShieldCheck,
   RotateCcw,
-  GitFork
+  GitFork,
+  FlaskConical,
+  Target
 } from 'lucide-react';
 import type { GlobalStats, BreakpointConfig, ChaosConfig, TraceRun } from '@/lib/api';
 import {
@@ -43,6 +45,8 @@ interface TopBarProps {
   chaosConfig: ChaosConfig | null;
   onOpenChaosModal: () => void;
   onOpenDiffModal: () => void;
+  onOpenExperimentStudio?: () => void;
+  onOpenEvaluationPanel?: () => void;
   onOpenCommandPalette: () => void;
   onToggleTimeline: () => void;
   isTimelineOpen: boolean;
@@ -66,6 +70,8 @@ export const TopBar: React.FC<TopBarProps> = ({
   chaosConfig,
   onOpenChaosModal,
   onOpenDiffModal,
+  onOpenExperimentStudio,
+  onOpenEvaluationPanel,
   onOpenCommandPalette,
   onToggleTimeline,
   isTimelineOpen,
@@ -206,6 +212,32 @@ export const TopBar: React.FC<TopBarProps> = ({
         >
           <span className="hidden md:inline">Diff</span>
         </Button>
+
+        {/* Experiment Studio */}
+        {onOpenExperimentStudio && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onOpenExperimentStudio}
+            icon={<FlaskConical className="w-3.5 h-3.5 text-emerald-400" />}
+            title="Open Replay & Experiment Studio (X)"
+          >
+            <span className="hidden md:inline">Studio</span>
+          </Button>
+        )}
+
+        {/* Evaluation Studio */}
+        {onOpenEvaluationPanel && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onOpenEvaluationPanel}
+            icon={<Target className="w-3.5 h-3.5 text-cyan-400" />}
+            title="Open Evaluation & Optimization Studio (E)"
+          >
+            <span className="hidden md:inline">Evaluate</span>
+          </Button>
+        )}
 
         {/* Chaos Mode */}
         <Button

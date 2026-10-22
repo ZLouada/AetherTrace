@@ -29,9 +29,28 @@ import {
   ShieldAlert,
   GitBranch,
   GitCommit,
-  Package
+  Package,
+  Workflow,
+  Zap,
+  Layers,
+  Brain,
+  GitMerge,
+  Share2,
+  CheckCircle2,
+  XCircle
 } from 'lucide-react';
-import type { TraceSpan, TraceRun, RunProvenance, BreakpointResolution } from '@/lib/api';
+import type {
+  TraceSpan,
+  TraceRun,
+  RunProvenance,
+  BreakpointResolution,
+  ExecutionIntelligence,
+  AgentSummary,
+  ToolChain,
+  IntelligentRetryChain,
+  CriticalPathSpan,
+  CausalRelation
+} from '@/lib/api';
 import { forkSpan, replaySpan, postChatCompletion } from '@/lib/api';
 import {
   Button,
@@ -45,11 +64,14 @@ import {
 
 interface InspectorDrawerProps {
   span: TraceSpan | null;
+  selectedAgent?: AgentSummary | null;
+  intelligence?: ExecutionIntelligence | null;
   run?: TraceRun | null;
   onClose: () => void;
   onForkSuccess: (newRunId: string) => void;
   onReplaySuccess?: (newRunId: string) => void;
   onSelectParentSpan?: (parentSpanId: string) => void;
+  onSelectSpan?: (spanId: string) => void;
   isHeldBreakpoint?: boolean;
   onResolveBreakpoint?: (spanId: string, resolution: BreakpointResolution) => Promise<void>;
   onToggleAgentBreakpoint?: (agentName: string) => void;
@@ -58,17 +80,20 @@ interface InspectorDrawerProps {
 
 export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
   span,
+  selectedAgent,
+  intelligence,
   run,
   onClose,
   onForkSuccess,
   onReplaySuccess,
   onSelectParentSpan,
+  onSelectSpan,
   isHeldBreakpoint,
   onResolveBreakpoint,
   onToggleAgentBreakpoint,
   isAgentBreakpointed
 }) => {
-  const [activeTab, setActiveTab] = useState<'inspector' | 'fork' | 'json'>('inspector');
+  const [activeTab, setActiveTab] = useState<'inspector' | 'intelligence' | 'fork' | 'json'>('inspector');
   const [copiedHash, setCopiedHash] = useState(false);
   const [copiedResponse, setCopiedResponse] = useState(false);
   const [copiedId, setCopiedId] = useState(false);
@@ -95,6 +120,13 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
   const [forkMessagesJson, setForkMessagesJson] = useState<string>('[]');
   const [forkJsonError, setForkJsonError] = useState<string | null>(null);
   const [isForking, setIsForking] = useState(false);
+
+  // If selectedAgent is provided and no span, switch to intelligence tab
+  useEffect(() => {
+    if (!span && selectedAgent) {
+      setActiveTab('intelligence');
+    }
+  }, [span, selectedAgent]);
 
   // Sync state when selected span changes
   useEffect(() => {
@@ -123,78 +155,67 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
     }
   }, [span]);
 
-  if (!span) return null;
+  if (!span && !selectedAgent) return null;
 
   const isIntercepted = Boolean(
-    isHeldBreakpoint ||
-    span.response_payload?.includes('"status":"intercepted"') ||
-    span.response_payload?.includes('"status": "intercepted"') ||
-    span.response_payload?.includes('"awaiting_human": true') ||
-    span.response_payload?.includes('"awaiting_human":true')
+    span &&
+    (isHeldBreakpoint ||
+      span.response_payload?.includes('"status":"intercepted"') ||
+      span.response_payload?.includes('"status": "intercepted"') ||
+      span.response_payload?.includes('"awaiting_human": true') ||
+      span.response_payload?.includes('"awaiting_human":true'))
   );
 
-  const handleCopyId = () => {
-    navigator.clipboard.writeText(span.id);
+  const handleCopyId = (idToCopy: string) => {
+    navigator.clipboard.writeText(idToCopy);
     setCopiedId(true);
     setTimeout(() => setCopiedId(false), 2000);
   };
 
-  const handleCopyResponse = () => {
-    if (span.response_payload) {
-      navigator.clipboard.writeText(span.response_payload);
-      setCopiedResponse(true);
-      setTimeout(() => setCopiedResponse(false), 2000);
-    }
-  };
-
-  const handleExecuteReplay = async () => {
+  const handleReplaySpan = async () => {
+    if (!span) return;
     setIsReplaying(true);
     setReplayError(null);
     try {
-      const res = await replaySpan(span.id);
+      const result = await replaySpan(span.id);
       if (onReplaySuccess) {
-        onReplaySuccess(res.newRunId);
+        onReplaySuccess(result.newRunId);
       }
     } catch (err: any) {
-      setReplayError(err.message || 'Failed to replay from span');
+      setReplayError(err.message || 'Replay failed');
     } finally {
       setIsReplaying(false);
     }
   };
 
   const handleExecuteFork = async () => {
-    let parsedMessages: any[];
-    try {
-      parsedMessages = JSON.parse(forkMessagesJson);
-      if (!Array.isArray(parsedMessages)) {
-        throw new Error('Messages must be an array of chat messages');
-      }
-      setForkJsonError(null);
-    } catch (err: any) {
-      setForkJsonError(err.message || 'Invalid JSON');
-      return;
-    }
-
+    if (!span) return;
     setIsForking(true);
+    setForkJsonError(null);
     try {
+      let parsedMessages: any = [];
+      try {
+        parsedMessages = JSON.parse(forkMessagesJson);
+      } catch {
+        throw new Error('Invalid JSON format in messages editor');
+      }
+
       const forkRes = await forkSpan(span.id, {
-        new_run_name: `fork-${span.agent_name}-${Date.now().toString().slice(-4)}`,
-        reason: 'time_travel_mutation'
+        new_run_name: `${run?.name || 'Run'}-fork-${forkAgentName}`,
+        reason: 'Time-Travel Fork from Inspector IDE'
       });
 
       const newRunId = forkRes.newRunId;
 
-      const payload = {
+      await postChatCompletion({
         model: forkModel,
         messages: parsedMessages,
-        temperature: 0.2
-      };
-
-      await postChatCompletion(payload, {
-        'X-Run-Id': newRunId,
-        'X-Parent-Span-Id': span.id,
-        'X-Agent-Name': forkAgentName,
-        'X-Mock-Upstream': 'true'
+        temperature: 0.7
+      }, {
+        runId: newRunId,
+        runName: `${run?.name || 'Run'}-fork-${forkAgentName}`,
+        agentName: forkAgentName,
+        parentSpanId: span.id
       });
 
       onForkSuccess(newRunId);
@@ -206,7 +227,7 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
   };
 
   const handleResolveResume = async () => {
-    if (!onResolveBreakpoint) return;
+    if (!span || !onResolveBreakpoint) return;
     setIsResolving(true);
     setInterceptError(null);
     try {
@@ -226,7 +247,7 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
   };
 
   const handleResolveMock = async () => {
-    if (!onResolveBreakpoint) return;
+    if (!span || !onResolveBreakpoint) return;
     setIsResolving(true);
     setInterceptError(null);
     try {
@@ -242,7 +263,7 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
   };
 
   const handleResolveAbort = async () => {
-    if (!onResolveBreakpoint) return;
+    if (!span || !onResolveBreakpoint) return;
     setIsResolving(true);
     setInterceptError(null);
     try {
@@ -259,12 +280,14 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
 
   let parsedRequest: any = null;
   let parsedResponse: any = null;
-  try {
-    if (span.request_payload) parsedRequest = JSON.parse(span.request_payload);
-  } catch {}
-  try {
-    if (span.response_payload) parsedResponse = JSON.parse(span.response_payload);
-  } catch {}
+  if (span) {
+    try {
+      if (span.request_payload) parsedRequest = JSON.parse(span.request_payload);
+    } catch {}
+    try {
+      if (span.response_payload) parsedResponse = JSON.parse(span.response_payload);
+    } catch {}
+  }
 
   let runProv: RunProvenance | null = null;
   if (run?.provenance) {
@@ -277,7 +300,37 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
     }
   }
 
-  const createdTime = new Date(span.created_at).toISOString().split('T')[1]?.replace('Z', '') || `${span.created_at}`;
+  // --- Intelligence Lookups for Active Span / Agent ---
+  const currentAgentSummary: AgentSummary | null =
+    selectedAgent ||
+    (span && intelligence?.agents.find((a) => a.agentName === span.agent_name)) ||
+    null;
+
+  const currentCriticalPathSpan =
+    span && intelligence?.criticalPath.spans.find((s) => s.spanId === span.id);
+
+  const currentToolChain =
+    span && intelligence?.toolChains.find((tc) => tc.spanIds.includes(span.id));
+
+  const currentRetryChain =
+    span &&
+    intelligence?.retryChains.find(
+      (rc) => rc.originalSpanId === span.id || rc.attempts.some((att) => att.spanId === span.id)
+    );
+
+  const currentParallelGroup =
+    span &&
+    intelligence?.parallelGroups.find((pg) => pg.branches.some((b) => b.spanIds.includes(span.id)));
+
+  const causedByRelations =
+    (span && intelligence?.causalRelations.filter((r) => r.targetSpanId === span.id)) || [];
+
+  const causedRelations =
+    (span && intelligence?.causalRelations.filter((r) => r.sourceSpanId === span.id)) || [];
+
+  const createdTime = span
+    ? new Date(span.created_at).toISOString().split('T')[1]?.replace('Z', '') || `${span.created_at}`
+    : '';
 
   return (
     <aside className="w-[460px] h-full border-l border-[#202024] bg-[#0c0c0e] flex flex-col shrink-0 shadow-2xl z-20 select-none">
@@ -285,15 +338,24 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
       <div className="px-3.5 py-2.5 border-b border-[#202024] bg-[#09090b] flex items-center justify-between">
         <div className="flex items-center gap-2 min-w-0">
           <Terminal className="w-3.5 h-3.5 text-zinc-300 shrink-0" />
-          <span className="text-xs font-mono font-semibold tracking-wide text-zinc-200 uppercase shrink-0">Inspector</span>
-          <button
-            onClick={handleCopyId}
-            className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded bg-[#18181c] text-zinc-400 hover:text-white border border-[#2c2c32] truncate max-w-[170px] transition-colors"
-            title="Click to copy span ID"
-          >
-            <span className="truncate">{span.id}</span>
-            {copiedId ? <Check className="w-2.5 h-2.5 text-white" /> : <Copy className="w-2.5 h-2.5" />}
-          </button>
+          <span className="text-xs font-mono font-semibold tracking-wide text-zinc-200 uppercase shrink-0">
+            {span ? 'Span Inspector' : 'Agent Summary'}
+          </span>
+          {span && (
+            <button
+              onClick={() => handleCopyId(span.id)}
+              className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded bg-[#18181c] text-zinc-400 hover:text-white border border-[#2c2c32] truncate max-w-[170px] transition-colors"
+              title="Click to copy span ID"
+            >
+              <span className="truncate">{span.id}</span>
+              {copiedId ? <Check className="w-2.5 h-2.5 text-white" /> : <Copy className="w-2.5 h-2.5" />}
+            </button>
+          )}
+          {!span && selectedAgent && (
+            <Badge variant="category" category="AGENT" size="xs">
+              {selectedAgent.agentName}
+            </Badge>
+          )}
         </div>
         <IconButton label="Close Inspector (Esc)" size="sm" onClick={onClose}>
           <X className="w-4 h-4" />
@@ -302,47 +364,65 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
 
       {/* Tabs Bar */}
       <div className="flex items-center border-b border-[#202024] bg-[#111114] px-3 font-mono text-xs">
-        <button
-          onClick={() => setActiveTab('inspector')}
-          className={`py-2 px-3 border-b-2 font-medium transition-colors flex items-center gap-1.5 ${
-            activeTab === 'inspector'
-              ? 'border-white text-white'
-              : 'border-transparent text-zinc-400 hover:text-zinc-200'
-          }`}
-        >
-          <FileText className="w-3.5 h-3.5" />
-          Overview
-        </button>
+        {span && (
+          <button
+            onClick={() => setActiveTab('inspector')}
+            className={`py-2 px-3 border-b-2 font-medium transition-colors flex items-center gap-1.5 ${
+              activeTab === 'inspector'
+                ? 'border-white text-white'
+                : 'border-transparent text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            <FileText className="w-3.5 h-3.5" />
+            Overview
+          </button>
+        )}
 
         <button
-          onClick={() => setActiveTab('fork')}
+          onClick={() => setActiveTab('intelligence')}
           className={`py-2 px-3 border-b-2 font-medium transition-colors flex items-center gap-1.5 ${
-            activeTab === 'fork'
+            activeTab === 'intelligence'
               ? 'border-white text-white'
               : 'border-transparent text-zinc-400 hover:text-zinc-200'
           }`}
         >
-          <GitFork className="w-3.5 h-3.5" />
-          Fork IDE
+          <Workflow className="w-3.5 h-3.5 text-cyan-400" />
+          Intelligence
         </button>
 
-        <button
-          onClick={() => setActiveTab('json')}
-          className={`py-2 px-3 border-b-2 font-medium transition-colors flex items-center gap-1.5 ${
-            activeTab === 'json'
-              ? 'border-white text-white'
-              : 'border-transparent text-zinc-400 hover:text-zinc-200'
-          }`}
-        >
-          <Code2 className="w-3.5 h-3.5" />
-          JSON
-        </button>
+        {span && (
+          <button
+            onClick={() => setActiveTab('fork')}
+            className={`py-2 px-3 border-b-2 font-medium transition-colors flex items-center gap-1.5 ${
+              activeTab === 'fork'
+                ? 'border-white text-white'
+                : 'border-transparent text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            <GitFork className="w-3.5 h-3.5" />
+            Fork IDE
+          </button>
+        )}
+
+        {span && (
+          <button
+            onClick={() => setActiveTab('json')}
+            className={`py-2 px-3 border-b-2 font-medium transition-colors flex items-center gap-1.5 ${
+              activeTab === 'json'
+                ? 'border-white text-white'
+                : 'border-transparent text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            <Code2 className="w-3.5 h-3.5" />
+            JSON
+          </button>
+        )}
       </div>
 
       {/* Drawer Content */}
       <div className="flex-1 overflow-y-auto p-3.5 space-y-3 font-mono text-xs select-text">
         {/* Live Breakpoint Intercept Box */}
-        {isIntercepted && (
+        {isIntercepted && span && (
           <div className="p-3 rounded bg-amber-950/30 border border-amber-600/70 space-y-2.5">
             <div className="flex items-center justify-between">
               <span className="flex items-center gap-1.5 text-xs font-semibold text-amber-300 uppercase">
@@ -358,158 +438,98 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
               Execution is suspended. Mutate prompt payload before forwarding, return a synthetic mock ($0.00 cost), or abort.
             </p>
 
-            {/* Editable Request Payload */}
+            {interceptError && (
+              <p className="text-[11px] text-rose-300 bg-rose-950/50 border border-rose-800 p-2 rounded">
+                {interceptError}
+              </p>
+            )}
+
             <div className="space-y-1">
-              <label className="text-[10px] text-amber-300 uppercase font-semibold flex justify-between">
-                <span>Mutate Request Payload</span>
-                <span className="text-amber-500/80 font-normal">JSON</span>
-              </label>
+              <label className="text-[10px] text-amber-300 uppercase font-semibold">Mutate Payload JSON</label>
               <textarea
                 rows={4}
                 value={editedPayloadJson}
                 onChange={(e) => setEditedPayloadJson(e.target.value)}
-                className="w-full bg-[#0e0e11] border border-amber-700/60 rounded p-2 text-[11px] text-amber-100 font-mono focus:outline-none focus:border-amber-400 resize-none leading-relaxed"
+                className="w-full bg-[#09090b] border border-amber-600/50 rounded p-2 text-[11px] text-amber-100 font-mono focus:outline-none focus:border-amber-400"
               />
             </div>
 
-            {/* Mock Response Input */}
             <div className="space-y-1">
-              <label className="text-[10px] text-amber-300 uppercase font-semibold block">
-                Mock Response Override
-              </label>
+              <label className="text-[10px] text-amber-300 uppercase font-semibold">Mock Response ($0.00)</label>
               <Input
-                placeholder="Synthetic answer returned instantly with $0.00 cost..."
+                placeholder="Synthetic completion text..."
                 value={mockResponseText}
                 onChange={(e) => setMockResponseText(e.target.value)}
               />
             </div>
 
-            {interceptError && (
-              <p className="text-[11px] text-rose-300 bg-rose-950/60 border border-rose-800 p-2 rounded">
-                {interceptError}
-              </p>
-            )}
-
-            {/* Action Buttons */}
-            <div className="grid grid-cols-3 gap-1.5 pt-1">
-              <Button variant="primary" size="xs" onClick={handleResolveResume} disabled={isResolving} icon={<Play className="w-2.5 h-2.5 fill-current" />}>
-                Resume
+            <div className="grid grid-cols-3 gap-2 pt-1">
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={isResolving}
+                isLoading={isResolving}
+                onClick={handleResolveResume}
+                icon={<Play className="w-3 h-3" />}
+              >
+                Forward
               </Button>
-              <Button variant="secondary" size="xs" onClick={handleResolveMock} disabled={isResolving} icon={<FlaskConical className="w-2.5 h-2.5" />}>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={isResolving}
+                onClick={handleResolveMock}
+                icon={<FlaskConical className="w-3 h-3" />}
+              >
                 Mock ($0)
               </Button>
-              <Button variant="danger" size="xs" onClick={handleResolveAbort} disabled={isResolving} icon={<Ban className="w-2.5 h-2.5" />}>
+              <Button
+                variant="danger"
+                size="sm"
+                disabled={isResolving}
+                onClick={handleResolveAbort}
+                icon={<Ban className="w-3 h-3" />}
+              >
                 Abort
               </Button>
             </div>
           </div>
         )}
 
-        {activeTab === 'inspector' && (
+        {/* TAB 1: OVERVIEW */}
+        {activeTab === 'inspector' && span && (
           <>
-            {/* Quick Actions Strip */}
-            <div className="grid grid-cols-2 gap-2">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={handleExecuteReplay}
-                disabled={isReplaying}
-                isLoading={isReplaying}
-                icon={<RotateCcw className="w-3 h-3 text-zinc-300" />}
-                title="Replay historical execution prefix from this span"
-              >
-                Replay From Here
-              </Button>
-
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={() => setActiveTab('fork')}
-                icon={<GitFork className="w-3 h-3" />}
-                title="Branch execution from this span"
-              >
-                Fork From Here
-              </Button>
-            </div>
-
-            {replayError && (
-              <p className="text-[11px] text-rose-300 bg-rose-950/40 border border-rose-900 p-2 rounded">
-                {replayError}
-              </p>
+            {/* Critical Path & Intelligence Quick Strip */}
+            {currentCriticalPathSpan && (
+              <div className="p-2.5 rounded bg-amber-950/20 border border-amber-500/40 flex items-center justify-between text-xs">
+                <span className="flex items-center gap-1.5 text-amber-300 font-semibold">
+                  <Zap className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                  Critical Path Span
+                </span>
+                <span className="text-amber-200/80 font-mono text-[11px]">
+                  {currentCriticalPathSpan.durationMs}ms ({currentCriticalPathSpan.percentageOfCriticalPath}%)
+                </span>
+              </div>
             )}
 
-            {/* Lineage & Origin Card */}
-            <div className="p-2.5 rounded bg-[#111114] border border-[#2c2c32] space-y-1.5">
-              <div className="flex items-center justify-between">
-                <span className="text-zinc-500 text-[10px] uppercase font-semibold">Origin</span>
-                <Badge
-                  variant={
-                    span.execution_origin === 'cached_replay' || span.cache_hit === 1
-                      ? 'origin'
-                      : span.execution_origin === 'modified'
-                      ? 'origin'
-                      : span.execution_origin === 'mocked'
-                      ? 'origin'
-                      : 'neutral'
-                  }
-                  origin={span.execution_origin as any}
-                  size="xs"
-                >
-                  {span.execution_origin === 'cached_replay' || span.cache_hit === 1
-                    ? 'CACHED REPLAY'
-                    : span.execution_origin === 'modified'
-                    ? 'MODIFIED'
-                    : span.execution_origin === 'mocked'
-                    ? 'MOCKED'
-                    : span.execution_origin === 'new_execution'
-                    ? 'NEW EXECUTION'
-                    : 'ORIGINAL'}
-                </Badge>
-              </div>
-              {span.source_span_id && (
-                <DataRow label="Source Span ID" value={span.source_span_id} copyable />
-              )}
-            </div>
-
-            {/* Run Provenance Card */}
-            {run && (
-              <div className="p-2.5 rounded bg-[#111114] border border-[#2c2c32] space-y-2">
+            {/* Run Provenance Banner */}
+            {runProv?.git && (
+              <div className="p-2.5 rounded bg-[#111114] border border-[#2c2c32] space-y-1">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-1.5">
-                    <GitBranch className="w-3.5 h-3.5 text-zinc-400" />
-                    <span className="text-zinc-400 text-[10px] uppercase font-semibold">Run Provenance</span>
-                  </div>
-                  {runProv?.reproducibility?.status && (
-                    <Badge variant="neutral" size="xs">
-                      {runProv.reproducibility.status.replace('_', ' ').toUpperCase()}
-                    </Badge>
-                  )}
+                  <span className="text-[10px] text-zinc-400 uppercase font-semibold flex items-center gap-1">
+                    <GitBranch className="w-3 h-3 text-zinc-500" />
+                    Git Provenance
+                  </span>
+                  <Badge variant="status" status={runProv.git.dirty ? 'warning' : 'success'} size="xs">
+                    {runProv.git.dirty ? 'Dirty Tree' : 'Clean Commit'}
+                  </Badge>
                 </div>
-
-                {runProv?.git && (
-                  <DataRow
-                    label="Git Commit"
-                    value={`${runProv.git.branch || 'detached'}@${runProv.git.short_sha || runProv.git.commit_sha?.slice(0, 7)} (${runProv.git.dirty ? 'DIRTY' : 'CLEAN'})`}
-                    copyValue={runProv.git.commit_sha}
-                    copyable
-                  />
-                )}
-
-                {runProv?.dependencies && (
-                  <DataRow
-                    label="Lockfile"
-                    value={`${runProv.dependencies.lockfile_type} (${runProv.dependencies.lockfile_fingerprint?.slice(0, 8)})`}
-                    copyValue={runProv.dependencies.lockfile_fingerprint}
-                    copyable
-                  />
-                )}
-
-                {runProv?.environment && (
-                  <DataRow
-                    label="Environment"
-                    value={`${runProv.environment.runtime?.name} ${runProv.environment.runtime?.version} · ${runProv.environment.os}`}
-                  />
-                )}
+                <DataRow
+                  label="Commit"
+                  value={`${runProv.git.branch || 'main'}@${runProv.git.short_sha || runProv.git.commit_sha?.slice(0, 7) || 'HEAD'}`}
+                  copyValue={runProv.git.commit_sha}
+                  copyable
+                />
               </div>
             )}
 
@@ -576,13 +596,11 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
                       className="text-[10px] text-zinc-400 uppercase font-semibold flex items-center gap-1 hover:text-zinc-200 mb-1"
                     >
                       {expandToolResult ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-                      Tool Output {parsedResponse.is_error ? '(Error)' : '(Success)'}
+                      Output Result
                     </button>
                     {expandToolResult && (
-                      <pre className={`p-2 rounded border text-[11px] overflow-x-auto max-h-36 ${
-                        parsedResponse.is_error ? 'bg-rose-950/20 border-rose-900 text-rose-300' : 'bg-black/80 border-[#202024] text-zinc-300'
-                      }`}>
-                        {JSON.stringify(parsedResponse.result !== undefined ? parsedResponse.result : parsedResponse, null, 2)}
+                      <pre className="p-2 rounded bg-black/80 border border-[#202024] text-[11px] text-zinc-300 overflow-x-auto max-h-40">
+                        {JSON.stringify(parsedResponse, null, 2)}
                       </pre>
                     )}
                   </div>
@@ -591,59 +609,40 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
             )}
 
             {/* Request Payload Section */}
-            <div className="space-y-1">
-              <button
-                onClick={() => setExpandRequest((p) => !p)}
-                className="w-full flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-zinc-400 hover:text-zinc-200 py-1"
-              >
-                <span className="flex items-center gap-1">
-                  {expandRequest ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-                  Request Payload
-                </span>
-                <span className="text-[10px] text-zinc-500 lowercase">{expandRequest ? 'collapse' : 'expand'}</span>
-              </button>
-              {expandRequest && (
-                <pre className="p-2.5 rounded bg-[#09090b] border border-[#202024] text-[11px] text-zinc-300 overflow-x-auto max-h-48 leading-relaxed">
-                  {parsedRequest ? JSON.stringify(parsedRequest, null, 2) : span.request_payload || 'No request payload'}
-                </pre>
-              )}
-            </div>
-
-            {/* Response Payload Section */}
-            <div className="space-y-1">
-              <div className="flex items-center justify-between py-1">
-                <button
-                  onClick={() => setExpandResponse((p) => !p)}
-                  className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 hover:text-zinc-200"
-                >
-                  {expandResponse ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-                  Response Output
-                </button>
-                <button
-                  onClick={handleCopyResponse}
-                  className="text-[10px] text-zinc-400 hover:text-white flex items-center gap-1"
-                  title="Copy response JSON"
-                >
-                  {copiedResponse ? <Check className="w-3 h-3 text-white" /> : <Copy className="w-3 h-3" />}
-                  {copiedResponse ? 'Copied' : 'Copy'}
-                </button>
+            {parsedRequest?.messages && (
+              <div className="p-2.5 rounded bg-[#111114] border border-[#2c2c32] space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <button
+                    onClick={() => setExpandRequest((p) => !p)}
+                    className="text-[10px] text-zinc-400 uppercase font-semibold flex items-center gap-1 hover:text-zinc-200"
+                  >
+                    {expandRequest ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                    Input Prompt Messages ({parsedRequest.messages.length})
+                  </button>
+                </div>
+                {expandRequest && (
+                  <pre className="p-2 rounded bg-black/80 border border-[#202024] text-[11px] text-zinc-300 overflow-x-auto max-h-48">
+                    {JSON.stringify(parsedRequest.messages, null, 2)}
+                  </pre>
+                )}
               </div>
-              {expandResponse && (
-                <pre
-                  className={`p-2.5 rounded border text-[11px] overflow-x-auto max-h-56 leading-relaxed ${
-                    span.span_type === 'guardrail_block'
-                      ? 'bg-rose-950/20 border-rose-800 text-rose-200'
-                      : 'bg-[#09090b] border-[#202024] text-zinc-300'
-                  }`}
-                >
-                  {parsedResponse ? JSON.stringify(parsedResponse, null, 2) : span.response_payload || 'No response payload'}
-                </pre>
-              )}
-            </div>
+            )}
 
-            {/* Breakpoint Config Action */}
-            {onToggleAgentBreakpoint && (
-              <div className="pt-1">
+            {/* Actions: Replay & Breakpoints */}
+            <div className="pt-2 flex flex-col gap-2">
+              <Button
+                variant="primary"
+                size="md"
+                className="w-full"
+                onClick={handleReplaySpan}
+                disabled={isReplaying}
+                isLoading={isReplaying}
+                icon={<RotateCcw className="w-3.5 h-3.5" />}
+              >
+                Replay From Here ($0.00 Cache Hit)
+              </Button>
+
+              {onToggleAgentBreakpoint && (
                 <Button
                   variant="secondary"
                   size="sm"
@@ -653,12 +652,202 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
                 >
                   {isAgentBreakpointed ? `Remove Breakpoint on ${span.agent_name}` : `Set Breakpoint on ${span.agent_name}`}
                 </Button>
-              </div>
-            )}
+              )}
+            </div>
           </>
         )}
 
-        {activeTab === 'fork' && (
+        {/* TAB 2: AGENT INTELLIGENCE */}
+        {activeTab === 'intelligence' && (
+          <div className="space-y-3 font-mono">
+            {/* Agent Summary Card */}
+            {currentAgentSummary && (
+              <div className="p-3 rounded bg-[#111114] border border-[#2c2c32] space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 text-xs font-semibold text-zinc-100">
+                    <Workflow className="w-3.5 h-3.5 text-cyan-400" />
+                    Agent: {currentAgentSummary.agentName}
+                  </span>
+                  <Badge variant="status" status={currentAgentSummary.status === 'failed' ? 'error' : 'success'} size="xs">
+                    {currentAgentSummary.status.toUpperCase()}
+                  </Badge>
+                </div>
+
+                <div className="grid grid-cols-2 gap-1 text-[11px]">
+                  <DataRow label="Depth" value={`Level ${currentAgentSummary.depth}`} />
+                  <DataRow label="Parent Agent" value={currentAgentSummary.parentAgentName || 'Root'} />
+                  <DataRow label="Duration" value={`${(currentAgentSummary.durationMs / 1000).toFixed(2)}s`} />
+                  <DataRow label="Total Spans" value={currentAgentSummary.spanCount} />
+                  <DataRow label="LLM Inferences" value={currentAgentSummary.llmCallCount} />
+                  <DataRow label="Tool Invocations" value={currentAgentSummary.toolCallCount} />
+                  <DataRow label="Retry Attempts" value={currentAgentSummary.retryCount} />
+                  <DataRow label="Errors" value={currentAgentSummary.errorCount} />
+                  <DataRow label="Cost USD" value={`$${currentAgentSummary.totalCostUsd.toFixed(6)}`} />
+                  <DataRow label="Tokens" value={currentAgentSummary.totalTokens} />
+                </div>
+              </div>
+            )}
+
+            {/* Critical Path Sequence */}
+            {intelligence?.criticalPath && (
+              <div className="p-3 rounded bg-[#111114] border border-[#2c2c32] space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 text-xs font-semibold text-amber-300">
+                    <Zap className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                    Critical Path Analysis
+                  </span>
+                  <Badge variant="status" status="warning" size="xs">
+                    {intelligence.criticalPath.coveragePercentage}% of Run
+                  </Badge>
+                </div>
+
+                <div className="text-[11px] text-zinc-400 space-y-1">
+                  <div className="flex justify-between">
+                    <span>Critical Path Duration:</span>
+                    <span className="text-zinc-200 font-semibold">{intelligence.criticalPath.durationMs}ms</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Run Wall-Clock Time:</span>
+                    <span className="text-zinc-200">{intelligence.criticalPath.runDurationMs}ms</span>
+                  </div>
+                  {intelligence.criticalPath.longestSpan && (
+                    <div className="flex justify-between">
+                      <span>Longest Bottleneck:</span>
+                      <span className="text-amber-200 font-semibold">
+                        {intelligence.criticalPath.longestSpan.agentName} ({intelligence.criticalPath.longestSpan.durationMs}ms)
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Critical Path Steps */}
+                <div className="pt-1 space-y-1 border-t border-[#202024]">
+                  <span className="text-[10px] text-zinc-500 uppercase font-semibold">Sequence:</span>
+                  <div className="space-y-1 max-h-36 overflow-y-auto">
+                    {intelligence.criticalPath.spans.map((cp, idx) => (
+                      <div
+                        key={cp.spanId}
+                        onClick={() => onSelectSpan && onSelectSpan(cp.spanId)}
+                        className={`p-1.5 rounded flex items-center justify-between text-[11px] cursor-pointer transition-colors ${
+                          span?.id === cp.spanId
+                            ? 'bg-amber-950/40 border border-amber-600/50 text-amber-200'
+                            : 'bg-[#18181c] hover:bg-[#202024] text-zinc-300'
+                        }`}
+                      >
+                        <span className="truncate max-w-[240px]">
+                          {idx + 1}. {cp.agentName}: {cp.label}
+                        </span>
+                        <span className="font-mono text-[10px] text-zinc-400 shrink-0">
+                          {cp.durationMs}ms ({cp.percentageOfCriticalPath}%)
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Causal Context for Current Span */}
+            {span && (
+              <div className="p-3 rounded bg-[#111114] border border-[#2c2c32] space-y-2">
+                <span className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
+                  <GitMerge className="w-3.5 h-3.5 text-zinc-400" />
+                  Causal Context for Current Span
+                </span>
+
+                {causedByRelations.length > 0 ? (
+                  <div className="space-y-1">
+                    <span className="text-[10px] text-zinc-500 uppercase font-semibold">Caused by:</span>
+                    {causedByRelations.map((r, idx) => (
+                      <div
+                        key={idx}
+                        onClick={() => onSelectSpan && onSelectSpan(r.sourceSpanId)}
+                        className="p-1.5 rounded bg-[#18181c] hover:bg-[#202024] text-[11px] cursor-pointer space-y-0.5"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-zinc-200 font-semibold">{r.relationType}</span>
+                          <Badge variant="neutral" size="xs">{r.classification}</Badge>
+                        </div>
+                        <p className="text-[10px] text-zinc-400 font-sans">{r.explanation}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-zinc-500 italic">No incoming causal dependencies (root execution).</p>
+                )}
+
+                {causedRelations.length > 0 && (
+                  <div className="space-y-1 pt-1 border-t border-[#202024]">
+                    <span className="text-[10px] text-zinc-500 uppercase font-semibold">Triggered Downstream:</span>
+                    {causedRelations.map((r, idx) => (
+                      <div
+                        key={idx}
+                        onClick={() => onSelectSpan && onSelectSpan(r.targetSpanId)}
+                        className="p-1.5 rounded bg-[#18181c] hover:bg-[#202024] text-[11px] cursor-pointer space-y-0.5"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="text-zinc-200 font-semibold">{r.relationType}</span>
+                          <Badge variant="neutral" size="xs">{r.classification}</Badge>
+                        </div>
+                        <p className="text-[10px] text-zinc-400 font-sans">{r.explanation}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Parallel Group Summary (if active in branch) */}
+            {currentParallelGroup && (
+              <div className="p-3 rounded bg-[#111114] border border-[#2c2c32] space-y-1.5">
+                <span className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
+                  <Share2 className="w-3.5 h-3.5 text-cyan-400" />
+                  Parallel Execution Group
+                </span>
+                <DataRow label="Branches" value={currentParallelGroup.branchCount} />
+                <DataRow label="Total Spans" value={currentParallelGroup.totalSpanCount} />
+                <DataRow label="Wall Time" value={`${currentParallelGroup.wallClockDurationMs}ms`} />
+                <DataRow label="Longest Branch" value={`${currentParallelGroup.longestBranchDurationMs}ms`} />
+                <DataRow label="Shortest Branch" value={`${currentParallelGroup.shortestBranchDurationMs}ms`} />
+              </div>
+            )}
+
+            {/* Retry Chain Details (if active) */}
+            {currentRetryChain && (
+              <div className="p-3 rounded bg-[#111114] border border-[#2c2c32] space-y-1.5">
+                <span className="text-xs font-semibold text-amber-300 flex items-center gap-1.5">
+                  <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+                  Retry Chain ({currentRetryChain.retryCount} retries)
+                </span>
+                <DataRow label="Operation" value={currentRetryChain.operationName} />
+                <DataRow label="Failed Attempts" value={currentRetryChain.failedAttemptsCount} />
+                <DataRow label="Outcome" value={currentRetryChain.finalStatus.toUpperCase()} />
+                <DataRow label="Total Retry Time" value={`${currentRetryChain.totalRetryDurationMs}ms`} />
+                <DataRow label="Total Retry Cost" value={`$${currentRetryChain.totalRetryCostUsd.toFixed(6)}`} />
+              </div>
+            )}
+
+            {/* Failure Hotspots */}
+            {intelligence?.failureHotspots && intelligence.failureHotspots.totalErrors > 0 && (
+              <div className="p-3 rounded bg-red-950/20 border border-red-900/40 space-y-1.5">
+                <span className="text-xs font-semibold text-red-300 flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 text-red-400" />
+                  Failure Hotspots
+                </span>
+                <DataRow label="Total Errors" value={intelligence.failureHotspots.totalErrors} />
+                {intelligence.failureHotspots.mostFailedTool && (
+                  <DataRow label="Most Failed Tool" value={intelligence.failureHotspots.mostFailedTool} />
+                )}
+                {intelligence.failureHotspots.mostRetriedOperation && (
+                  <DataRow label="Most Retried" value={intelligence.failureHotspots.mostRetriedOperation} />
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB 3: FORK IDE */}
+        {activeTab === 'fork' && span && (
           <div className="space-y-3 font-mono">
             <div className="p-2.5 rounded bg-[#111114] border border-[#2c2c32] text-xs text-zinc-300 leading-relaxed font-sans">
               <span className="font-semibold text-white block mb-0.5 flex items-center gap-1 font-mono">
@@ -723,7 +912,8 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
           </div>
         )}
 
-        {activeTab === 'json' && (
+        {/* TAB 4: JSON */}
+        {activeTab === 'json' && span && (
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <span className="text-[10px] text-zinc-400 uppercase font-semibold">Raw Span Object</span>

@@ -42,12 +42,16 @@ export function resolveDbPath(customPath?: string): string {
   if (envPath) {
     return isAbsolute(envPath) ? envPath : resolve(process.cwd(), envPath);
   }
-  // 3. Project configuration: traverse upward looking for .trace.sqlite in project parent directories
+  // 3. Vercel Serverless environment: default to writable /tmp directory
+  if (process.env.VERCEL) {
+    return '/tmp/.trace.sqlite';
+  }
+  // 4. Project configuration: traverse upward looking for .trace.sqlite in project parent directories
   const upwardFound = findUpwardDbPath();
   if (upwardFound) {
     return upwardFound;
   }
-  // 4. Default location in current working directory
+  // 5. Default location in current working directory
   return resolve(process.cwd(), '.trace.sqlite');
 }
 
@@ -129,7 +133,80 @@ export function runAutoMigration(sqlite: Database.Database): void {
   } catch {
     // Search schema initialization safe error handling
   }
+
+  try {
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS experiments (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        source_run_id TEXT NOT NULL REFERENCES trace_runs(id) ON DELETE CASCADE,
+        status TEXT NOT NULL DEFAULT 'draft',
+        metadata TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS experiments_source_run_idx ON experiments(source_run_id);
+      CREATE INDEX IF NOT EXISTS experiments_status_idx ON experiments(status);
+      CREATE INDEX IF NOT EXISTS experiments_created_at_idx ON experiments(created_at);
+
+      CREATE TABLE IF NOT EXISTS experiment_variants (
+        id TEXT PRIMARY KEY,
+        experiment_id TEXT NOT NULL REFERENCES experiments(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        description TEXT,
+        source_run_id TEXT NOT NULL,
+        replay_run_id TEXT,
+        fork_span_id TEXT,
+        mutations TEXT NOT NULL DEFAULT '[]',
+        replay_mode TEXT NOT NULL DEFAULT 'cache_only',
+        status TEXT NOT NULL DEFAULT 'draft',
+        error_message TEXT,
+        created_at INTEGER NOT NULL,
+        completed_at INTEGER
+      );
+
+      CREATE INDEX IF NOT EXISTS experiment_variants_experiment_idx ON experiment_variants(experiment_id);
+      CREATE INDEX IF NOT EXISTS experiment_variants_status_idx ON experiment_variants(status);
+      CREATE INDEX IF NOT EXISTS experiment_variants_replay_run_idx ON experiment_variants(replay_run_id);
+    `);
+  } catch {
+    // Experiments schema initialization safe error handling
+  }
+
+  try {
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS evaluations (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT,
+        target_type TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'passed',
+        assertions_total INTEGER NOT NULL DEFAULT 0,
+        assertions_passed INTEGER NOT NULL DEFAULT 0,
+        assertions_failed INTEGER NOT NULL DEFAULT 0,
+        metrics TEXT NOT NULL DEFAULT '{}',
+        assertions TEXT NOT NULL DEFAULT '[]',
+        failures TEXT NOT NULL DEFAULT '[]',
+        error_clusters TEXT NOT NULL DEFAULT '[]',
+        root_causes TEXT NOT NULL DEFAULT '[]',
+        optimization_signals TEXT NOT NULL DEFAULT '[]',
+        regression TEXT,
+        created_at INTEGER NOT NULL,
+        completed_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS evaluations_target_idx ON evaluations(target_type, target_id);
+      CREATE INDEX IF NOT EXISTS evaluations_status_idx ON evaluations(status);
+      CREATE INDEX IF NOT EXISTS evaluations_created_at_idx ON evaluations(created_at);
+    `);
+  } catch {
+    // Evaluations schema initialization safe error handling
+  }
 }
+
 
 export function getDatabase(customPath?: string): DatabaseConnection {
   const dbPath = resolveDbPath(customPath);

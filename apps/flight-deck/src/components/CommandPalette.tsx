@@ -18,7 +18,9 @@ import {
   AlertTriangle,
   GitBranch,
   Bookmark,
-  X
+  X,
+  Zap,
+  Target
 } from 'lucide-react';
 import {
   searchTraces,
@@ -52,7 +54,13 @@ interface CommandPaletteProps {
   onToggleTimeline: () => void;
   onOpenDiffModal: () => void;
   onOpenChaosModal: () => void;
+  onOpenExperimentStudio?: () => void;
+  onOpenEvaluationPanel?: () => void;
   onExportTrace: () => void;
+  onToggleCriticalPathFocus?: () => void;
+  onCollapseAllAgents?: () => void;
+  onExpandAllAgents?: () => void;
+  onSelectFilter?: (filter: string) => void;
 }
 
 interface PaletteItem {
@@ -85,7 +93,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   onToggleTimeline,
   onOpenDiffModal,
   onOpenChaosModal,
-  onExportTrace
+  onOpenExperimentStudio,
+  onOpenEvaluationPanel,
+  onExportTrace,
+  onToggleCriticalPathFocus,
+  onCollapseAllAgents,
+  onExpandAllAgents,
+  onSelectFilter
 }) => {
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -240,14 +254,91 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       });
     }
 
+    if (onOpenExperimentStudio && (!q || isCommandMode || 'experiment studio replay mutate variants'.includes(filterTerm))) {
+      actionList.push({
+        id: 'action-experiment-studio',
+        category: 'Actions',
+        label: 'Open Replay & Experiment Studio',
+        detail: 'Configure variants, mutate prompts, and batch replay (X)',
+        icon: FlaskConical,
+        run: onOpenExperimentStudio
+      });
+    }
+
+    if (onOpenEvaluationPanel && (!q || isCommandMode || 'evaluate evaluation assertions root cause optimize metrics'.includes(filterTerm))) {
+      actionList.push({
+        id: 'action-evaluation-studio',
+        category: 'Actions',
+        label: 'Open Evaluation & Optimization Studio',
+        detail: 'Run deterministic assertions, inspect root causes, and view optimization signals (E)',
+        icon: Target,
+        run: onOpenEvaluationPanel
+      });
+    }
+
     if (!q || isCommandMode || 'export trace bundle pcap'.includes(filterTerm)) {
       actionList.push({
         id: 'action-export',
         category: 'Actions',
         label: 'Export Trace (.trace.json)',
-        detail: 'Download portable execution bundle (E)',
+        detail: 'Download portable execution bundle',
         icon: Download,
         run: onExportTrace
+      });
+    }
+
+    if (onToggleCriticalPathFocus && (!q || isCommandMode || 'critical path focus bottleneck'.includes(filterTerm))) {
+      actionList.push({
+        id: 'action-critical-path',
+        category: 'Actions',
+        label: 'Toggle Critical Path Focus',
+        detail: 'Highlight DAG bottleneck and subdue non-critical nodes',
+        icon: Zap,
+        run: onToggleCriticalPathFocus
+      });
+    }
+
+    if (onCollapseAllAgents && (!q || isCommandMode || 'collapse all agents'.includes(filterTerm))) {
+      actionList.push({
+        id: 'action-collapse-agents',
+        category: 'Actions',
+        label: 'Collapse All Agents',
+        detail: 'Group spans by agent boundaries in DAG',
+        icon: Layers,
+        run: onCollapseAllAgents
+      });
+    }
+
+    if (onExpandAllAgents && (!q || isCommandMode || 'expand all agents'.includes(filterTerm))) {
+      actionList.push({
+        id: 'action-expand-agents',
+        category: 'Actions',
+        label: 'Expand All Agents',
+        detail: 'Show all individual spans in DAG',
+        icon: Layers,
+        run: onExpandAllAgents
+      });
+    }
+
+    if (onSelectFilter && (!q || isCommandMode || 'filter errors error failures'.includes(filterTerm))) {
+      actionList.push({
+        id: 'action-filter-errors',
+        category: 'Actions',
+        label: 'Filter: Errors & Retries Only',
+        detail: 'Only display failing spans and retry attempts',
+        icon: AlertTriangle,
+        run: () => onSelectFilter('errors')
+      });
+    }
+
+    if (onSelectFilter && (!q || isCommandMode || 'filter tools tool'.includes(filterTerm))) {
+      actionList.push({
+        id: 'action-filter-tools',
+        category: 'Actions',
+        label: 'Filter: Tools Only',
+        detail: 'Only display tool execution spans',
+        icon: Wrench,
+        run: () => onSelectFilter('tools')
       });
     }
 

@@ -1,0 +1,59 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "flight-deck": {
+      "root": "apps/flight-deck",
+      "framework": "nextjs",
+      "bindings": [
+        {
+          "type": "service",
+          "service": "proxy-server",
+          "format": "url",
+          "env": "PROXY_SERVER_URL"
+        }
+      ]
+    },
+    "proxy-server": {
+      "root": "apps/proxy-server",
+      "framework": "hono"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": {
+        "service": "proxy-server"
+      }
+    },
+    {
+      "source": "/v1/(.*)",
+      "destination": {
+        "service": "proxy-server"
+      }
+    },
+    {
+      "source": "/chat/(.*)",
+      "destination": {
+        "service": "proxy-server"
+      }
+    },
+    {
+      "source": "/health",
+      "destination": {
+        "service": "proxy-server"
+      }
+    },
+    {
+      "source": "/ws",
+      "destination": {
+        "service": "proxy-server"
+      }
+    },
+    {
+      "source": "/(.*)",
+      "destination": {
+        "service": "flight-deck"
+      }
+    }
+  ]
+}

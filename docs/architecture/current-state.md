@@ -366,6 +366,53 @@ graph TD
 
 ---
 
+### 3.17. Agent Intelligence Engine (`packages/core-schema/src/intelligence`, `apps/proxy-server/src/routes/traces.ts`, `apps/flight-deck/`)
+- **Deterministic Local-First Engine:** 100% mathematical derivation of agent structure and metrics with zero external LLM calls, zero cloud dependencies, and zero `eval`.
+- **Subsystem Modules:**
+  - `agents.ts`: Groups spans by agent, infers parent-agent hierarchy, calculates nesting depth, and aggregates exact token, cost, tool, retry, and duration metrics.
+  - `tools.ts`: Assembles sequential tool invocations into `ToolChain` collections with argument and result payloads, duration tracking, and retry status.
+  - `parallel.ts`: Evaluates strict temporal overlap ($\max(s_1, s_2) < \min(e_1, e_2)$) to isolate concurrent branches, identify the slowest branch, and detect post-parallel synchronization spans with zero-recursion bottom-up propagation.
+  - `retries.ts`: Traverses chained retries back to origin failed spans, computes failure hotspots (`mostRetriedOperation`, `mostFailedTool`, `longestRetryChainCount`, `highestRetryCostUsd`).
+  - `critical-path.ts`: O(V+E) dynamic programming longest dependency path calculator using `Float64Array` and `Int32Array` typed arrays, isolating runtime bottlenecks.
+  - `causality.ts`: Classifies inter-span relationships into deterministic `CAUSAL`, `STRUCTURAL`, and `TEMPORAL` taxonomies.
+  - `engine.ts`: Master orchestrator with in-memory LRU caching for completed immutable runs.
+- **Proxy Server Endpoint:** `GET /api/runs/:id/intelligence` exposing structured intelligence payloads with instant cache hits on repeat reads.
+- **Flight Deck Visual Integration:**
+  - Visual `AgentGroupNode` containers wrapping agent-specific spans.
+  - Interactive collapsible agent hierarchies for decluttering large multi-agent DAGs.
+  - Critical Path glowing amber highlight path with one-click filter toggle in header and ⌘K Command Palette.
+  - Causal predecessors, successors, and failure origins in the Inspector Drawer.
+- **CLI Intelligence Briefing:** `aethertrace inspect <run_id>` formatting complete agent hierarchy trees, critical path bottlenecks, tool chains, parallel groups, and failure hotspots.
+- **Scalability & SLAs:** 100 spans in 2.31ms (< 50ms SLA), 1,000 spans in 19.25ms (< 100ms SLA), and 10,000 spans in 233.51ms (< 500ms SLA).
+
+---
+
+### 3.18. Replay & Experiment Studio (`packages/core-schema/src/experiments.ts`, `apps/proxy-server/src/routes/experiments.ts`, `apps/flight-deck/src/components/ExperimentStudio.tsx`, `packages/cli/`)
+- **Persistent Experiment Domain:** Full CRUD operations for `experiments` and `experiment_variants` tables in SQLite, with foreign key integrity back to source runs and fork points.
+- **Topological Prefix Caching:** Preserves unmutated ancestor spans preceding the fork span at $0.00 spend and 0ms latency with `execution_origin: 'cached_replay'`.
+- **Mutation Studio:** Deterministic mutation types (`prompt`, `model`, `tool_args`, `mock_tool`) with dynamic token price recalculation via `@aethertrace/pricing-engine`.
+- **Bounded Concurrency & Failure Isolation:** In-memory worker pool with a maximum concurrency limit of 2, isolating variant errors to ensure unperturbed completion of sibling branches.
+- **Multi-Variant Comparison Scorecards:** Real-time generation of token, cost, duration, cache hit rate, cost delta %, and duration delta % matrices, integrated with node-level semantic DAG diffing (`< 10ms` SLA).
+- **Flight Deck Experiment Studio:** High-density 3-tab modal (`Variants & Mutations`, `Comparison Matrix`, `Replay History`), global hotkey `X`, `⌘K` palette integration, Mutation Studio config modal, and direct links to Diff Arena.
+- **CLI Management Suite:** `aethertrace experiment` commands (`list`, `create`, `inspect`, `variant-add`, `run`, `compare`) enabling full terminal-driven experimentation workflows.
+- **Security & Safety Guardrails:** Strict Phase 7 enforcement including mutating-tool protection, explicit user confirmation for live replays, SSRF filtering, and security audit trail logging.
+
+---
+
+### 3.19. Evaluation & Optimization Engine (`packages/core-schema/src/evaluation/`, `apps/proxy-server/src/routes/evaluations.ts`, `apps/flight-deck/src/components/EvaluationPanel.tsx`, `packages/cli/`)
+- **100% Deterministic & Zero External AI Judges:** No probabilistic LLM-as-a-judge, no cloud evaluators, and no hallucinated scores. Every assertion evaluates to a boolean fact with transparent score derivation (`assertionsPassed / assertionsTotal * 100%`).
+- **Zero-Eval Assertion DSL:** Rich parser for comparison operators (`==`, `!=`, `<`, `<=`, `>`, `>=`, `contains`, `not_contains`, `exists`, `not_exists`), duration/currency/token aliases, and tool existence rules (`tool "<name>" must exist`).
+- **Security Sandboxing:** Enforces strict property access guards; attempts to access `__proto__`, `constructor`, `prototype`, `globalthis`, or `process` throw immediate Security Violations.
+- **Concrete Evidence Attachment:** Every failed or passed assertion attaches concrete evidence: culprit span IDs, actual metric values, expected bounds, and error payloads.
+- **Causal Root-Cause Analysis:** Leverages Phase 11 execution intelligence to differentiate root trigger failures from downstream cascade effects (retries, timeouts, parent aborts).
+- **Deterministic Error Clustering:** Regex canonicalization normalizing dynamic variables (`<IP>`, `:<PORT>`, `<NUM>`, `<UUID>`, `<PATH>`) with full credential and API token masking.
+- **Actionable Optimization Signals:** Deterministically flags cost hotspots, critical path latency bottlenecks, retry storms, prompt token bloat, and sequential tool parallelism opportunities with estimated savings.
+- **Flight Deck Evaluation Studio:** High-density 5-tab modal (`Overview & Metrics`, `Assertions`, `Root Cause & Errors`, `Optimization Signals`, `Evaluation History`), hotkey `E`, `⌘K` palette integration, culprit span deep-linking, and JSON/Markdown export.
+- **CLI Management & CI Gates:** `aethertrace evaluate` commands (`run`, `assert`, `inspect`, `failures`, `errors`, `optimize`, `compare`, `export`, `list`) with deterministic exit codes (`0` for pass, `1` for fail, `2` for error).
+- **Scalability & SLAs:** Full evaluation report generated in 2.99ms (< 100ms SLA, 33x faster).
+
+---
+
 ## 4. Architectural Verification Matrix
 
 | Verification Aspect | Command | Status | Result / Notes |
@@ -385,6 +432,12 @@ graph TD
 | **Phase 8 Search & UX**    | `pnpm test:phase8` | **PASSED** | Zero-eval parser, FTS5 engine, ranking, error discovery, CLI search, ⌘K |
 | **Phase 9 Product UX**     | `pnpm test:phase9` | **PASSED** | Design system tokens, 13 primitives, accessibility, visual surfaces, keyboard contracts |
 | **Phase 10 Release Engineering** | `pnpm test:phase10` | **PASSED** | Productization, packaging integrity, standalone examples, CLI flags, system status API |
+| **Phase 11 Agent Intelligence** | `pnpm test:phase11` | **PASSED** | Deterministic hierarchies, tool chains, parallel groups, retries, critical path DP, causal taxonomy, 10k scalability |
+| **Phase 12 Replay & Experiment Studio** | `pnpm test:phase12` | **PASSED** | Experiment CRUD, 4 mutation types, prefix caching, bounded batch execution, 9.65ms scorecard matrix, persistent replay history |
+| **Phase 13 Evaluation & Optimization** | `pnpm test:phase13` | **PASSED** | Zero-eval assertion DSL, evidence attachment, culprit localization, error clustering, root cause, optimization signals, CLI CI gate, 2.99ms SLA |
+
+
+
 
 
 
