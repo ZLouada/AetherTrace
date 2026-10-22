@@ -5,8 +5,11 @@ import { TopBar } from '@/components/TopBar';
 import { RunSidebar } from '@/components/RunSidebar';
 import { DagCanvas } from '@/components/DagCanvas';
 import { InspectorDrawer } from '@/components/InspectorDrawer';
+import { Timeline } from '@/components/Timeline';
+import { CommandPalette } from '@/components/CommandPalette';
 import { ChaosModal } from '@/components/ChaosModal';
 import { DiffArenaModal } from '@/components/DiffArenaModal';
+import { BreakpointModal } from '@/components/BreakpointModal';
 import {
   fetchRuns,
   fetchRunSpans,
@@ -19,6 +22,9 @@ import {
   resolveBreakpoint,
   fetchChaosConfig,
   updateChaosConfig,
+  replaySpan,
+  pauseRun,
+  resumeRun,
   WS_BASE,
   type TraceRun,
   type TraceSpan,
@@ -40,17 +46,21 @@ export default function FlightDeckPage() {
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
   const [dagDirection, setDagDirection] = useState<'TB' | 'LR'>('TB');
 
-  // Phase 4: Breakpoints & Chaos State
+  // Debugger Panel States
+  const [isTimelineOpen, setIsTimelineOpen] = useState<boolean>(true);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
+
+  // Breakpoints & Chaos State
   const [breakpointConfig, setBreakpointConfig] = useState<BreakpointConfig | null>(null);
   const [pendingBreakpoints, setPendingBreakpoints] = useState<PendingBreakpoint[]>([]);
+  const [isBreakpointModalOpen, setIsBreakpointModalOpen] = useState<boolean>(false);
   const [chaosConfig, setChaosConfig] = useState<ChaosConfig | null>(null);
   const [isChaosModalOpen, setIsChaosModalOpen] = useState<boolean>(false);
 
-  // Phase 5: Diff Arena State
+  // Diff Arena State
   const [isDiffModalOpen, setIsDiffModalOpen] = useState<boolean>(false);
   const [diffBaseId, setDiffBaseId] = useState<string | null>(null);
   const [diffTargetId, setDiffTargetId] = useState<string | null>(null);
-
 
   const selectedRunIdRef = useRef<string | null>(null);
   selectedRunIdRef.current = selectedRunId;
@@ -159,7 +169,7 @@ export default function FlightDeckPage() {
             // Update stats
             loadStats();
 
-            // Refresh runs list when runs or spans are created
+            // Refresh runs list when runs or spans are created or updated
             if (
               eventType === 'RUN_CREATED' ||
               eventType === 'RUN_UPDATED' ||
@@ -215,9 +225,123 @@ export default function FlightDeckPage() {
       clearTimeout(reconnectTimeout);
       if (ws) ws.close();
     };
-  }, [loadStats, loadSpansForRun]);
+  }, [loadStats, loadSpansForRun, loadBreakpoints, loadChaosConfig]);
 
-  // 4. Handle Simulation Trigger
+  // 4. Global Keyboard Shortcuts Listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger if user is typing in an input or textarea
+      const targetTag = (e.target as HTMLElement)?.tagName?.toLowerCase();
+      const isInput = targetTag === 'input' || targetTag === 'textarea' || (e.target as HTMLElement)?.isContentEditable;
+
+      // Cmd+K / Ctrl+K: Command Palette
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setIsCommandPaletteOpen((p) => !p);
+        return;
+      }
+
+      // Escape: Close open drawers or modals
+      if (e.key === 'Escape') {
+        if (isCommandPaletteOpen) {
+          setIsCommandPaletteOpen(false);
+          return;
+        }
+        if (isBreakpointModalOpen) {
+          setIsBreakpointModalOpen(false);
+          return;
+        }
+        if (isChaosModalOpen) {
+          setIsChaosModalOpen(false);
+          return;
+        }
+        if (isDiffModalOpen) {
+          setIsDiffModalOpen(false);
+          return;
+        }
+        if (selectedSpan) {
+          setSelectedSpan(null);
+          return;
+        }
+      }
+
+      if (isInput) return;
+
+      // Single-key shortcuts
+      switch (e.key.toLowerCase()) {
+        case 't':
+          e.preventDefault();
+          setIsTimelineOpen((prev) => !prev);
+          break;
+        case 'i':
+          e.preventDefault();
+          if (selectedSpan) {
+            setSelectedSpan(null);
+          } else if (spans.length > 0) {
+            setSelectedSpan(spans[0]);
+          }
+          break;
+        case 'b':
+          e.preventDefault();
+          handleToggleBreakpoints();
+          break;
+        case 'd':
+          e.preventDefault();
+          handleOpenDiffModal();
+          break;
+        case 'c':
+          e.preventDefault();
+          setIsChaosModalOpen(true);
+          break;
+        case 'e':
+          e.preventDefault();
+          handleExportTrace();
+          break;
+        case ' ': // Space: Pause / Resume current run
+          e.preventDefault();
+          const activeRun = runs.find((r) => r.id === selectedRunId);
+          if (activeRun) {
+            if (activeRun.status === 'running') {
+              handlePauseRun(activeRun.id);
+            } else if (activeRun.status === 'paused') {
+              handleResumeRun(activeRun.id);
+            }
+          }
+          break;
+        case 'arrowdown':
+        case 'j':
+          if (spans.length > 0) {
+            e.preventDefault();
+            const currIdx = spans.findIndex((s) => s.id === selectedSpan?.id);
+            const nextIdx = currIdx === -1 ? 0 : Math.min(spans.length - 1, currIdx + 1);
+            setSelectedSpan(spans[nextIdx]);
+          }
+          break;
+        case 'arrowup':
+        case 'k':
+          if (spans.length > 0) {
+            e.preventDefault();
+            const currIdx = spans.findIndex((s) => s.id === selectedSpan?.id);
+            const prevIdx = currIdx <= 0 ? spans.length - 1 : currIdx - 1;
+            setSelectedSpan(spans[prevIdx]);
+          }
+          break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [
+    isCommandPaletteOpen,
+    isChaosModalOpen,
+    isDiffModalOpen,
+    selectedSpan,
+    spans,
+    selectedRunId,
+    runs
+  ]);
+
+  // 5. Simulation Handler
   const handleRunSimulation = async () => {
     setIsSimulating(true);
     const simSeed = Date.now();
@@ -226,7 +350,7 @@ export default function FlightDeckPage() {
 
     try {
       // Step 1: Planner
-      const res1 = await postChatCompletion(
+      await postChatCompletion(
         {
           model: 'gpt-4o',
           messages: [
@@ -242,15 +366,12 @@ export default function FlightDeckPage() {
         }
       );
 
-      // Select this run immediately so user watches the DAG unfold
       setSelectedRunId(simRunId);
       await loadRuns(simRunId);
       await sleep(350);
 
-      const span1Id = res1.data?.id ? `span_planner_${simSeed}` : null;
-
       // Step 2: Researcher
-      const res2 = await postChatCompletion(
+      await postChatCompletion(
         {
           model: 'gpt-4o',
           messages: [
@@ -300,22 +421,6 @@ export default function FlightDeckPage() {
       );
       await sleep(350);
 
-      // Step 5: Rogue Loop Agent triggering circuit breaker
-      const loopPayload = {
-        model: 'gpt-4o-mini',
-        messages: [{ role: 'user', content: `Run infinite self-referential reflection loop [Seed:${simSeed}]` }]
-      };
-
-      for (let i = 0; i < 3; i++) {
-        await postChatCompletion(loopPayload, {
-          'X-Run-Id': simRunId,
-          'X-Agent-Name': 'Rogue Loop Agent',
-          'X-Replay-Mode': 'false',
-          'X-Mock-Upstream': 'true'
-        });
-        await sleep(150);
-      }
-
       await loadRuns(simRunId);
       await loadSpansForRun(simRunId);
       await loadStats();
@@ -359,6 +464,58 @@ export default function FlightDeckPage() {
     }
   };
 
+  const handleToggleAgentBreakpoint = async (agentName: string) => {
+    try {
+      const currentList = breakpointConfig?.matchAgentNames || [];
+      const updatedList = currentList.includes(agentName)
+        ? currentList.filter((a) => a !== agentName)
+        : [...currentList, agentName];
+
+      const res = await updateBreakpointConfig({
+        enabled: true,
+        matchAgentNames: updatedList
+      });
+      setBreakpointConfig(res.config);
+    } catch (err: any) {
+      alert(`Failed to update breakpoint for agent: ${err.message}`);
+    }
+  };
+
+  const handlePauseRun = async (runId?: string) => {
+    const target = runId || selectedRunId;
+    if (!target) return;
+    try {
+      await pauseRun(target);
+      await loadRuns(target);
+    } catch (err: any) {
+      alert(`Failed to pause run: ${err.message}`);
+    }
+  };
+
+  const handleResumeRun = async (runId?: string) => {
+    const target = runId || selectedRunId;
+    if (!target) return;
+    try {
+      await resumeRun(target);
+      await loadRuns(target);
+    } catch (err: any) {
+      alert(`Failed to resume run: ${err.message}`);
+    }
+  };
+
+  const handleReplayFromSelected = async () => {
+    if (!selectedSpan) return;
+    try {
+      const res = await replaySpan(selectedSpan.id);
+      await loadRuns(res.newRunId);
+      setSelectedRunId(res.newRunId);
+      await loadSpansForRun(res.newRunId);
+      await loadStats();
+    } catch (err: any) {
+      alert(`Replay failed: ${err.message}`);
+    }
+  };
+
   const handleSaveChaosConfig = async (newCfg: Partial<ChaosConfig>) => {
     const res = await updateChaosConfig(newCfg);
     setChaosConfig(res.config);
@@ -394,27 +551,33 @@ export default function FlightDeckPage() {
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-canvas">
-      {/* Top Telemetry Header */}
+      {/* Top Telemetry & Control Header */}
       <TopBar
         wsConnected={wsConnected}
         stats={stats}
         onRefreshStats={loadStats}
         onRunSimulation={handleRunSimulation}
         isSimulating={isSimulating}
-        selectedRunId={selectedRunId}
+        selectedRun={selectedRun}
         onExportTrace={handleExportTrace}
         onImportTrace={handleImportTrace}
         breakpointConfig={breakpointConfig}
         pendingBreakpointsCount={pendingBreakpoints.length}
         onToggleBreakpoints={handleToggleBreakpoints}
+        onOpenBreakpointModal={() => setIsBreakpointModalOpen(true)}
         chaosConfig={chaosConfig}
         onOpenChaosModal={() => setIsChaosModalOpen(true)}
         onOpenDiffModal={() => handleOpenDiffModal()}
+        onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
+        onToggleTimeline={() => setIsTimelineOpen((p) => !p)}
+        isTimelineOpen={isTimelineOpen}
+        onPauseRun={() => handlePauseRun()}
+        onResumeRun={() => handleResumeRun()}
       />
 
       {/* 3-Pane Flight Deck Body */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left Pane: Run History Sidebar */}
+        {/* Left Pane: Execution Run Navigation */}
         <RunSidebar
           runs={runs}
           selectedRunId={selectedRunId}
@@ -425,6 +588,8 @@ export default function FlightDeckPage() {
           onRefreshRuns={() => loadRuns()}
           isLoading={isLoadingRuns}
           onCompareRuns={(baseId, targetId) => handleOpenDiffModal(baseId, targetId)}
+          onPauseRun={(rId) => handlePauseRun(rId)}
+          onResumeRun={(rId) => handleResumeRun(rId)}
         />
 
         {/* Center Pane: Interactive React Flow DAG */}
@@ -437,21 +602,93 @@ export default function FlightDeckPage() {
           onToggleDirection={() => setDagDirection((d) => (d === 'TB' ? 'LR' : 'TB'))}
         />
 
-        {/* Right Pane: Inspector & Time-Travel Fork IDE */}
+        {/* Right Pane: Upgraded Event Inspector & Fork IDE */}
         {selectedSpan && (
           <InspectorDrawer
             span={selectedSpan}
+            run={selectedRun}
             onClose={() => setSelectedSpan(null)}
             onForkSuccess={(newRunId) => {
               loadRuns(newRunId);
+              setSelectedRunId(newRunId);
+            }}
+            onReplaySuccess={(newRunId) => {
+              loadRuns(newRunId);
+              setSelectedRunId(newRunId);
+            }}
+            onSelectParentSpan={(parentSpanId) => {
+              const p = spans.find((s) => s.id === parentSpanId);
+              if (p) setSelectedSpan(p);
             }}
             isHeldBreakpoint={pendingBreakpoints.some((p) => p.spanId === selectedSpan.id)}
             onResolveBreakpoint={handleResolveBreakpoint}
+            onToggleAgentBreakpoint={handleToggleAgentBreakpoint}
+            isAgentBreakpointed={Boolean(
+              breakpointConfig?.matchAgentNames.includes(selectedSpan.agent_name)
+            )}
           />
         )}
       </div>
 
-      {/* Phase 4: Chaos Engineering Modal */}
+      {/* Bottom Pane: Execution Timeline Waterfall */}
+      <Timeline
+        spans={spans}
+        selectedSpanId={selectedSpan?.id || null}
+        onSelectSpan={(span) => setSelectedSpan(span)}
+        isOpen={isTimelineOpen}
+        onToggleOpen={() => setIsTimelineOpen((p) => !p)}
+        selectedRun={selectedRun}
+      />
+
+      {/* Lightweight Command Palette (Cmd+K) */}
+      <CommandPalette
+        isOpen={isCommandPaletteOpen}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        runs={runs}
+        selectedRunId={selectedRunId}
+        onSelectRun={(runId) => {
+          setSelectedRunId(runId);
+          setSelectedSpan(null);
+        }}
+        spans={spans}
+        selectedSpan={selectedSpan}
+        onSelectSpan={(span) => setSelectedSpan(span)}
+        onSelectSearchResult={async (res) => {
+          if (res.type === 'run') {
+            setSelectedRunId(res.runId);
+            setSelectedSpan(null);
+          } else if (res.spanId) {
+            if (res.runId !== selectedRunId) {
+              setSelectedRunId(res.runId);
+              try {
+                const data = await fetchRunSpans(res.runId);
+                setSpans(data.spans);
+                const target = data.spans.find((s) => s.id === res.spanId);
+                if (target) setSelectedSpan(target);
+              } catch {}
+            } else {
+              const target = spans.find((s) => s.id === res.spanId);
+              if (target) setSelectedSpan(target);
+            }
+          }
+        }}
+        onPauseRun={() => handlePauseRun()}
+        onResumeRun={() => handleResumeRun()}
+        onReplaySpan={() => handleReplayFromSelected()}
+        onForkSpan={() => {
+          if (selectedSpan) {
+            // Focus inspector drawer to fork tab
+            setSelectedSpan(selectedSpan);
+          }
+        }}
+        onToggleBreakpoints={() => handleToggleBreakpoints()}
+        onToggleTimeline={() => setIsTimelineOpen((p) => !p)}
+        onOpenDiffModal={() => handleOpenDiffModal()}
+        onOpenChaosModal={() => setIsChaosModalOpen(true)}
+        onExportTrace={() => handleExportTrace()}
+      />
+
+      {/* Chaos Engineering Modal */}
       <ChaosModal
         isOpen={isChaosModalOpen}
         onClose={() => setIsChaosModalOpen(false)}
@@ -459,7 +696,7 @@ export default function FlightDeckPage() {
         onSave={handleSaveChaosConfig}
       />
 
-      {/* Phase 5: Side-by-Side Diff Arena Modal */}
+      {/* Side-by-Side Diff Arena Modal */}
       <DiffArenaModal
         isOpen={isDiffModalOpen}
         onClose={() => setIsDiffModalOpen(false)}
@@ -467,7 +704,18 @@ export default function FlightDeckPage() {
         initialBaseId={diffBaseId}
         initialTargetId={diffTargetId}
       />
+
+      {/* Conditional Breakpoints Rules Modal */}
+      <BreakpointModal
+        isOpen={isBreakpointModalOpen}
+        onClose={() => setIsBreakpointModalOpen(false)}
+        config={breakpointConfig}
+        onSaveConfig={async (newCfg) => {
+          const res = await updateBreakpointConfig(newCfg);
+          setBreakpointConfig(res.config);
+        }}
+        onRefresh={loadBreakpoints}
+      />
     </div>
   );
 }
-

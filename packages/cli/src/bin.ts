@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startServer } from '@aethertrace/proxy-server';
@@ -9,10 +9,18 @@ import {
   trace_runs,
   trace_spans,
   computeRunDiff,
+  captureFullProvenance,
+  compareRunProvenance,
+  executeSearch,
+  rebuildSearchIndex,
+  discoverErrors,
   type TraceRun,
   type TraceSpan,
   type RunDiffResult,
-  type RegressionAssertionResult
+  type RegressionAssertionResult,
+  type RunProvenance,
+  type ProvenanceComparisonResult,
+  type SearchResult
 } from '@aethertrace/core-schema';
 import { eq, asc } from 'drizzle-orm';
 import { randomUUID } from 'node:crypto';
@@ -28,6 +36,8 @@ const colors = {
   dim: '\x1b[2m'
 };
 
+const CLI_VERSION = '0.1.0';
+
 function printBanner() {
   console.log(`
 ${colors.cyan}${colors.bold}     ___         _   _               _____                     
@@ -39,6 +49,10 @@ ${colors.cyan}${colors.bold}     ___         _   _               _____
 `);
 }
 
+function printVersion() {
+  console.log(`aethertrace v${CLI_VERSION}`);
+}
+
 function printHelp() {
   printBanner();
   console.log(`${colors.bold}USAGE:${colors.reset}`);
@@ -46,12 +60,23 @@ function printHelp() {
   console.log(`${colors.bold}COMMANDS:${colors.reset}`);
   console.log(`  ${colors.green}start${colors.reset}                      Launch local proxy server (port 4000) & event bus`);
   console.log(`  ${colors.green}sim${colors.reset}                        Execute a 5-step autonomous multi-agent simulation`);
+  console.log(`  ${colors.green}inspect <run_id>${colors.reset}           Inspect run details, Git, environment, and lineage`);
+  console.log(`  ${colors.green}provenance <run_id> [--json]${colors.reset} Display machine/human-readable execution provenance`);
+  console.log(`  ${colors.green}compare <run_a> <run_b>${colors.reset}     Compare environment and Git provenance between two runs`);
+  console.log(`  ${colors.green}reproduce <run_id>${colors.reset}          Analyze reproducibility requirements against current tree`);
   console.log(`  ${colors.green}diff <base_id> <target_id>${colors.reset} Compare two runs side-by-side in an ASCII diff matrix`);
   console.log(`  ${colors.green}assert <trace.json>${colors.reset}        Assert budget, latency SLA, and zero-breaker status`);
   console.log(`  ${colors.green}export <run_id>${colors.reset}            Export a run to a portable .trace.json bundle`);
   console.log(`  ${colors.green}import <file.json>${colors.reset}         Import a .trace.json bundle into local SQLite`);
-  console.log(`  ${colors.green}help${colors.reset}                       Show this help menu\n`);
+  console.log(`  ${colors.green}search <query> [--limit <n>] [--json]${colors.reset} Global search across runs, spans, events, and errors`);
+  console.log(`  ${colors.green}search rebuild${colors.reset}              Rebuild search index projection from trace database`);
+  console.log(`  ${colors.green}errors [--limit <n>] [--json]${colors.reset} Cross-run error aggregation and failure discovery`);
+  console.log(`  ${colors.green}status${colors.reset}                      Check system health, database record counts, and memory`);
+  console.log(`  ${colors.green}clean${colors.reset}                       Purge local trace database (.trace.sqlite)`);
+  console.log(`  ${colors.green}version, -v, --version${colors.reset}      Display installed AetherTrace version`);
+  console.log(`  ${colors.green}help, -h, --help${colors.reset}            Show this help menu\n`);
   console.log(`${colors.bold}OPTIONS:${colors.reset}`);
+  console.log(`  -d, --db <path>            Path to SQLite trace database (default: auto-detected or .trace.sqlite)`);
   console.log(`  -o, --output <file>        Output destination file for export (default: run_<id>.trace.json)`);
   console.log(`  -p, --port <number>        Port to listen on (default: 4000)`);
   console.log(`  --max-cost <usd>           Max cost allowed for regression gate assert (e.g. 0.05)`);
@@ -158,10 +183,16 @@ async function handleExport(runId: string, outputFile?: string) {
 
   const spans = db.select().from(trace_spans).where(eq(trace_spans.run_id, runId)).orderBy(asc(trace_spans.created_at)).all();
 
+  let runProvenance: any = null;
+  if (runs[0].provenance) {
+    try { runProvenance = JSON.parse(runs[0].provenance); } catch {}
+  }
+
   const bundle = {
     version: '1.0',
     exported_at: Date.now(),
     run: runs[0],
+    provenance: runProvenance,
     spans
   };
 
@@ -208,6 +239,9 @@ export async function handleImport(filePath: string, log: boolean = true) {
     sqlite.prepare('DELETE FROM trace_spans WHERE run_id = ?').run(runData.id);
     sqlite.prepare('DELETE FROM trace_runs WHERE id = ?').run(runData.id);
 
+    const rawProv = bundle.provenance || runData.provenance;
+    const provStr = typeof rawProv === 'string' ? rawProv : rawProv ? JSON.stringify(rawProv) : null;
+
     db.insert(trace_runs).values({
       id: runData.id,
       name: runData.name || 'imported-run',
@@ -216,6 +250,8 @@ export async function handleImport(filePath: string, log: boolean = true) {
       total_cost_usd: runData.total_cost_usd || 0.0,
       parent_run_id: runData.parent_run_id || null,
       forked_at_span_id: runData.forked_at_span_id || null,
+      mutations: typeof runData.mutations === 'string' ? runData.mutations : runData.mutations ? JSON.stringify(runData.mutations) : null,
+      provenance: provStr,
       created_at: runData.created_at || now
     }).run();
 
@@ -246,6 +282,283 @@ export async function handleImport(filePath: string, log: boolean = true) {
     console.log(`  ${colors.green}✔ Imported trace '${runData.name}' (${runData.id}) into local SQLite!${colors.reset}`);
     console.log(`  ${colors.dim}Spans restored: ${spansData.length}, Status: ${runData.status}${colors.reset}`);
   }
+}
+
+export async function handleInspect(runId: string) {
+  if (!runId) {
+    console.error(`${colors.red}Error: Missing <run_id> argument.${colors.reset}`);
+    process.exit(1);
+  }
+
+  const { db } = getDatabase();
+  const runs = db.select().from(trace_runs).where(eq(trace_runs.id, runId)).limit(1).all();
+
+  if (runs.length === 0) {
+    console.error(`${colors.red}Error: Run '${runId}' not found in local database (.trace.sqlite).${colors.reset}`);
+    process.exit(1);
+  }
+
+  const run = runs[0];
+  const spans = db.select().from(trace_spans).where(eq(trace_spans.run_id, runId)).orderBy(asc(trace_spans.created_at)).all();
+
+  let prov: RunProvenance | null = null;
+  if (run.provenance) {
+    try { prov = JSON.parse(run.provenance); } catch {}
+  }
+
+  printBanner();
+  console.log(`${colors.cyan}${colors.bold}========================================================================${colors.reset}`);
+  console.log(`  ${colors.bold}🔍 AetherTrace Run Inspector${colors.reset}`);
+  console.log(`${colors.cyan}========================================================================${colors.reset}\n`);
+
+  console.log(`  ${colors.bold}Run ID:${colors.reset}        ${run.id}`);
+  console.log(`  ${colors.bold}Name:${colors.reset}          ${run.name}`);
+  console.log(`  ${colors.bold}Status:${colors.reset}        ${run.status === 'completed' ? colors.green : run.status === 'paused' ? colors.yellow : colors.cyan}${run.status}${colors.reset}`);
+  console.log(`  ${colors.bold}Total Cost:${colors.reset}    $${run.total_cost_usd.toFixed(6)}`);
+  console.log(`  ${colors.bold}Total Tokens:${colors.reset}  ${run.total_tokens}`);
+  console.log(`  ${colors.bold}Spans Count:${colors.reset}   ${spans.length}\n`);
+
+  console.log(`  ${colors.bold}--- Git Provenance ---${colors.reset}`);
+  if (prov?.git) {
+    console.log(`  ${colors.bold}Commit:${colors.reset}        ${prov.git.commit_sha || 'unknown'} (${prov.git.short_sha || 'N/A'})`);
+    console.log(`  ${colors.bold}Branch:${colors.reset}        ${prov.git.branch || '(detached HEAD)'}`);
+    console.log(`  ${colors.bold}Working Tree:${colors.reset}  ${prov.git.dirty ? `${colors.yellow}⚠ DIRTY (Uncommitted Changes)${colors.reset}` : `${colors.green}✓ CLEAN${colors.reset}`}`);
+    if (prov.git.source_fingerprint) {
+      console.log(`  ${colors.bold}Fingerprint:${colors.reset}   ${colors.dim}${prov.git.source_fingerprint}${colors.reset}`);
+    }
+  } else {
+    console.log(`  ${colors.dim}(No Git provenance captured for this run)${colors.reset}`);
+  }
+  console.log('');
+
+  console.log(`  ${colors.bold}--- Environment ---${colors.reset}`);
+  if (prov?.environment) {
+    console.log(`  ${colors.bold}Runtime:${colors.reset}       ${prov.environment.runtime.name} ${prov.environment.runtime.version}`);
+    console.log(`  ${colors.bold}Platform:${colors.reset}      ${prov.environment.os} (${prov.environment.architecture})`);
+    console.log(`  ${colors.bold}Pkg Manager:${colors.reset}   ${prov.environment.package_manager || 'unknown'}`);
+    console.log(`  ${colors.bold}AetherTrace:${colors.reset}   v${prov.environment.aethertrace_version || '0.4.0'}`);
+  } else {
+    console.log(`  ${colors.dim}(No environment provenance captured)${colors.reset}`);
+  }
+  console.log('');
+
+  console.log(`  ${colors.bold}--- Dependencies ---${colors.reset}`);
+  if (prov?.dependencies) {
+    console.log(`  ${colors.bold}Lockfile:${colors.reset}      ${prov.dependencies.lockfile_type}`);
+    console.log(`  ${colors.bold}Fingerprint:${colors.reset}   ${prov.dependencies.lockfile_fingerprint ? `${colors.dim}${prov.dependencies.lockfile_fingerprint}${colors.reset}` : 'none'}`);
+  } else {
+    console.log(`  ${colors.dim}(No dependency lockfile captured)${colors.reset}`);
+  }
+  console.log('');
+
+  console.log(`  ${colors.bold}--- Lineage & Replay ---${colors.reset}`);
+  console.log(`  ${colors.bold}Parent Run:${colors.reset}    ${run.parent_run_id || 'none (root session)'}`);
+  console.log(`  ${colors.bold}Fork Span:${colors.reset}     ${run.forked_at_span_id || 'none'}`);
+  if (run.mutations) {
+    try {
+      const muts = JSON.parse(run.mutations);
+      console.log(`  ${colors.bold}Mutations:${colors.reset}     ${muts.length} recorded modifications`);
+    } catch {}
+  }
+  console.log('');
+
+  console.log(`  ${colors.bold}--- Reproducibility Assessment ---${colors.reset}`);
+  const repStatus = prov?.reproducibility?.status || 'unknown';
+  const statusColor = repStatus === 'reproducible' ? colors.green : repStatus === 'dirty_worktree' ? colors.yellow : colors.red;
+  console.log(`  ${colors.bold}Status:${colors.reset}        ${statusColor}${repStatus.toUpperCase()}${colors.reset}`);
+  if (prov?.reproducibility?.reasons && prov.reproducibility.reasons.length > 0) {
+    for (const r of prov.reproducibility.reasons) {
+      console.log(`  ${colors.dim}• ${r}${colors.reset}`);
+    }
+  }
+  console.log(`\n${colors.cyan}========================================================================${colors.reset}\n`);
+}
+
+export async function handleProvenance(runId: string, options: { json?: boolean } = {}) {
+  if (!runId) {
+    console.error(`${colors.red}Error: Missing <run_id> argument.${colors.reset}`);
+    process.exit(1);
+  }
+
+  const { db } = getDatabase();
+  const runs = db.select().from(trace_runs).where(eq(trace_runs.id, runId)).limit(1).all();
+
+  if (runs.length === 0) {
+    console.error(`${colors.red}Error: Run '${runId}' not found.${colors.reset}`);
+    process.exit(1);
+  }
+
+  const run = runs[0];
+  let prov: RunProvenance | null = null;
+  if (run.provenance) {
+    try { prov = JSON.parse(run.provenance); } catch {}
+  }
+
+  if (options.json) {
+    console.log(JSON.stringify({ runId: run.id, runName: run.name, provenance: prov }, null, 2));
+    return;
+  }
+
+  printBanner();
+  console.log(`${colors.cyan}${colors.bold}========================================================================${colors.reset}`);
+  console.log(`  ${colors.bold}📜 AetherTrace Execution Provenance Record${colors.reset}`);
+  console.log(`${colors.cyan}========================================================================${colors.reset}\n`);
+
+  console.log(`  ${colors.bold}Run:${colors.reset}           ${run.name} (${run.id})`);
+  console.log(`  ${colors.bold}Git Commit:${colors.reset}    ${prov?.git?.commit_sha || 'N/A'}`);
+  console.log(`  ${colors.bold}Git Branch:${colors.reset}    ${prov?.git?.branch || 'N/A'}`);
+  console.log(`  ${colors.bold}Git Dirty:${colors.reset}     ${prov?.git?.dirty ? 'Yes (uncommitted code)' : 'No (clean commit)'}`);
+  console.log(`  ${colors.bold}Source Hash:${colors.reset}   ${prov?.git?.source_fingerprint || 'N/A'}`);
+  console.log(`  ${colors.bold}Lockfile:${colors.reset}      ${prov?.dependencies?.lockfile_type || 'N/A'}`);
+  console.log(`  ${colors.bold}Lockfile Hash:${colors.reset} ${prov?.dependencies?.lockfile_fingerprint || 'N/A'}`);
+  console.log(`  ${colors.bold}Runtime:${colors.reset}       ${prov?.environment?.runtime?.name || 'N/A'} ${prov?.environment?.runtime?.version || ''}`);
+  console.log(`  ${colors.bold}Platform:${colors.reset}      ${prov?.environment?.os || 'N/A'}-${prov?.environment?.architecture || ''}`);
+  console.log(`  ${colors.bold}Reproducible:${colors.reset}  ${prov?.reproducibility?.status || 'unknown'}`);
+  console.log(`\n${colors.cyan}========================================================================${colors.reset}\n`);
+}
+
+export async function handleCompare(runAId: string, runBId: string) {
+  if (!runAId || !runBId) {
+    console.error(`${colors.red}Error: Missing arguments. Usage: aethertrace compare <run_a> <run_b>${colors.reset}`);
+    process.exit(1);
+  }
+
+  const { db } = getDatabase();
+  const runA = db.select().from(trace_runs).where(eq(trace_runs.id, runAId)).limit(1).all()[0];
+  const runB = db.select().from(trace_runs).where(eq(trace_runs.id, runBId)).limit(1).all()[0];
+
+  if (!runA || !runB) {
+    console.error(`${colors.red}Error: One or both runs not found ('${runAId}', '${runBId}')${colors.reset}`);
+    process.exit(1);
+  }
+
+  let provA: RunProvenance | null = null;
+  let provB: RunProvenance | null = null;
+  try { if (runA.provenance) provA = JSON.parse(runA.provenance); } catch {}
+  try { if (runB.provenance) provB = JSON.parse(runB.provenance); } catch {}
+
+  const result = compareRunProvenance(provA, provB);
+
+  printBanner();
+  console.log(`${colors.cyan}${colors.bold}========================================================================${colors.reset}`);
+  console.log(`  ${colors.bold}⚖️  AetherTrace Provenance Comparator${colors.reset}`);
+  console.log(`${colors.cyan}========================================================================${colors.reset}\n`);
+
+  console.log(`  ${colors.bold}Run A:${colors.reset} ${runA.name} (${colors.dim}${runA.id}${colors.reset})`);
+  console.log(`  ${colors.bold}Run B:${colors.reset} ${runB.name} (${colors.dim}${runB.id}${colors.reset})\n`);
+
+  // Source section
+  console.log(`  ${colors.bold}SOURCE${colors.reset}`);
+  if (result.source.status === 'identical') {
+    console.log(`  ${colors.green}✓ Same commit (${result.source.base_commit?.slice(0, 7) || 'clean'})${colors.reset}`);
+  } else if (result.source.status === 'dirty_divergence') {
+    console.log(`  ${colors.yellow}⚠ Working tree dirty or divergence detected${colors.reset}`);
+  } else {
+    console.log(`  ${colors.red}✗ Commit differs (${result.source.base_commit?.slice(0, 7) || 'N/A'} -> ${result.source.target_commit?.slice(0, 7) || 'N/A'})${colors.reset}`);
+  }
+  console.log('');
+
+  // Dependencies section
+  console.log(`  ${colors.bold}DEPENDENCIES${colors.reset}`);
+  if (result.dependencies.status === 'identical') {
+    console.log(`  ${colors.green}✓ Same lockfile (${result.dependencies.base_lockfile}) & fingerprint${colors.reset}`);
+  } else {
+    console.log(`  ${colors.yellow}✗ Dependencies differ (${result.dependencies.base_lockfile} vs ${result.dependencies.target_lockfile})${colors.reset}`);
+  }
+  console.log('');
+
+  // Runtime section
+  console.log(`  ${colors.bold}RUNTIME${colors.reset}`);
+  if (result.runtime.status === 'identical') {
+    console.log(`  ${colors.green}✓ Same runtime version (${result.runtime.base_runtime})${colors.reset}`);
+  } else {
+    console.log(`  ${colors.yellow}✗ Runtime differs (${result.runtime.base_runtime} -> ${result.runtime.target_runtime})${colors.reset}`);
+  }
+  console.log('');
+
+  // Platform section
+  console.log(`  ${colors.bold}PLATFORM${colors.reset}`);
+  if (result.platform.status === 'identical') {
+    console.log(`  ${colors.green}✓ Same platform (${result.platform.base_platform})${colors.reset}`);
+  } else {
+    console.log(`  ${colors.yellow}✗ Platform differs (${result.platform.base_platform} -> ${result.platform.target_platform})${colors.reset}`);
+  }
+  console.log('');
+
+  // Scorecard
+  console.log(`  ${colors.bold}--- Reproducibility Scorecard ---${colors.reset}`);
+  console.log(`  ${colors.bold}Source:       ${colors.reset} ${result.scorecard.source ? `${colors.green}✓${colors.reset}` : `${colors.red}✗${colors.reset}`}`);
+  console.log(`  ${colors.bold}Dependencies: ${colors.reset} ${result.scorecard.dependencies ? `${colors.green}✓${colors.reset}` : `${colors.yellow}✗${colors.reset}`}`);
+  console.log(`  ${colors.bold}Runtime:      ${colors.reset} ${result.scorecard.runtime ? `${colors.green}✓${colors.reset}` : `${colors.yellow}✗${colors.reset}`}`);
+  console.log(`  ${colors.bold}Platform:     ${colors.reset} ${result.scorecard.platform ? `${colors.green}✓${colors.reset}` : `${colors.yellow}✗${colors.reset}`}`);
+  console.log(`  ${colors.bold}Git state:    ${colors.reset} ${result.scorecard.git_state ? `${colors.green}✓${colors.reset}` : `${colors.yellow}⚠${colors.reset}`}\n`);
+
+  console.log(`  ${colors.bold}Status:${colors.reset} ${result.scorecard.status === 'reproducible' ? colors.green : colors.yellow}${result.scorecard.status.toUpperCase()}${colors.reset}`);
+  console.log(`  ${colors.bold}Interpretation:${colors.reset} ${result.scorecard.interpretation}`);
+  console.log(`\n${colors.cyan}========================================================================${colors.reset}\n`);
+
+  return result;
+}
+
+export async function handleReproduce(runId: string) {
+  if (!runId) {
+    console.error(`${colors.red}Error: Missing <run_id> argument.${colors.reset}`);
+    process.exit(1);
+  }
+
+  const { db } = getDatabase();
+  const run = db.select().from(trace_runs).where(eq(trace_runs.id, runId)).limit(1).all()[0];
+  if (!run) {
+    console.error(`${colors.red}Error: Run '${runId}' not found.${colors.reset}`);
+    process.exit(1);
+  }
+
+  let targetProv: RunProvenance | null = null;
+  try { if (run.provenance) targetProv = JSON.parse(run.provenance); } catch {}
+
+  const currentProv = captureFullProvenance();
+  const comp = compareRunProvenance(targetProv, currentProv);
+
+  printBanner();
+  console.log(`${colors.cyan}${colors.bold}========================================================================${colors.reset}`);
+  console.log(`  ${colors.bold}🔄 AetherTrace Run Reproduction Advisor${colors.reset}`);
+  console.log(`${colors.cyan}========================================================================${colors.reset}\n`);
+
+  console.log(`  ${colors.bold}Target Run:${colors.reset}       ${run.name} (${run.id})`);
+  console.log(`  ${colors.bold}Target Commit:${colors.reset}    ${targetProv?.git?.commit_sha || 'N/A'} (${targetProv?.git?.branch || 'detached'})`);
+  console.log(`  ${colors.bold}Target Tree:${colors.reset}      ${targetProv?.git?.dirty ? `${colors.yellow}⚠ DIRTY${colors.reset}` : `${colors.green}✓ CLEAN${colors.reset}`}\n`);
+
+  console.log(`  ${colors.bold}Current Tree:${colors.reset}`);
+  console.log(`  ${colors.bold}Current Commit:${colors.reset}   ${currentProv.git?.commit_sha || 'N/A'} (${currentProv.git?.branch || 'detached'})`);
+  console.log(`  ${colors.bold}Current State:${colors.reset}    ${currentProv.git?.dirty ? `${colors.yellow}⚠ DIRTY (Uncommitted modifications present)${colors.reset}` : `${colors.green}✓ CLEAN${colors.reset}`}\n`);
+
+  console.log(`  ${colors.bold}--- Reproduction Analysis ---${colors.reset}`);
+  if (!targetProv?.git?.commit_sha) {
+    console.log(`  ${colors.red}✖ Missing historical Git provenance. Full reproduction cannot be guaranteed.${colors.reset}`);
+  } else if (comp.source.same_commit && !comp.source.target_dirty && !comp.source.base_dirty) {
+    console.log(`  ${colors.green}✔ Current repository exactly matches the target commit and working tree is clean.${colors.reset}`);
+    console.log(`  ${colors.dim}You can safely replay this run via:${colors.reset} ${colors.cyan}npx aethertrace sim${colors.reset}`);
+  } else {
+    console.log(`  ${colors.yellow}⚠ Current repository state differs from target run:${colors.reset}`);
+    if (!comp.source.same_commit) {
+      console.log(`    • Target commit:  ${colors.cyan}${targetProv.git.commit_sha}${colors.reset}`);
+      console.log(`    • Current commit: ${colors.dim}${currentProv.git?.commit_sha || 'N/A'}${colors.reset}`);
+    }
+    if (currentProv.git?.dirty) {
+      console.log(`    • ${colors.yellow}Working tree has uncommitted modifications.${colors.reset}`);
+    }
+    console.log(`\n  ${colors.bold}Recommended manual reproduction steps:${colors.reset}`);
+    if (currentProv.git?.dirty) {
+      console.log(`    1. ${colors.cyan}git stash${colors.reset} (preserve current uncommitted changes)`);
+    }
+    console.log(`    ${currentProv.git?.dirty ? '2' : '1'}. ${colors.cyan}git checkout ${targetProv.git.commit_sha}${colors.reset}`);
+    console.log(`    ${currentProv.git?.dirty ? '3' : '2'}. ${colors.cyan}pnpm install${colors.reset} (match dependency lockfile)`);
+    console.log(`    ${currentProv.git?.dirty ? '4' : '3'}. Re-run agent script or launch replay\n`);
+    console.log(`  ${colors.dim}Note: AetherTrace never automatically mutates or checks out your git working tree.${colors.reset}`);
+  }
+
+  console.log(`\n${colors.cyan}========================================================================${colors.reset}\n`);
+  return comp;
 }
 
 export async function handleDiff(baseId: string, targetId: string) {
@@ -289,8 +602,12 @@ export async function handleDiff(baseId: string, targetId: string) {
     let statusBadge = '';
     if (step.status === 'identical_cached') {
       statusBadge = `${colors.green}⚡ CACHED PREFIX${colors.reset}     `;
-    } else if (step.status === 'modified_fork') {
+    } else if (step.status === 'modified_fork' || step.status === 'modified') {
       statusBadge = `${colors.yellow}🔀 FORK POINT   ${colors.reset}     `;
+    } else if (step.status === 'inserted') {
+      statusBadge = `${colors.cyan}➕ INSERTED     ${colors.reset}     `;
+    } else if (step.status === 'removed') {
+      statusBadge = `${colors.red}➖ REMOVED      ${colors.reset}     `;
     } else {
       statusBadge = `${colors.magenta}⬇ DIVERGED      ${colors.reset}     `;
     }
@@ -415,8 +732,147 @@ export async function handleAssert(
   };
 }
 
+async function handleSearch(query: string, options: { limit?: number; json?: boolean } = {}) {
+  const { sqlite } = getDatabase();
+
+  if (!query || query === 'rebuild') {
+    const res = rebuildSearchIndex(sqlite);
+    if (options.json) {
+      console.log(JSON.stringify(res, null, 2));
+    } else {
+      printBanner();
+      console.log(`  ${colors.green}✔ Search index rebuilt successfully:${colors.reset}`);
+      console.log(`    • Runs indexed:  ${colors.bold}${res.runsIndexed}${colors.reset}`);
+      console.log(`    • Spans indexed: ${colors.bold}${res.spansIndexed}${colors.reset}`);
+      console.log(`    • Time taken:    ${colors.cyan}${res.tookMs}ms${colors.reset}\n`);
+    }
+    return;
+  }
+
+  const response = executeSearch(sqlite, query, { limit: options.limit });
+
+  if (options.json) {
+    console.log(JSON.stringify(response, null, 2));
+    return;
+  }
+
+  printBanner();
+  console.log(`${colors.bold}🔍 AetherTrace Global Search:${colors.reset} "${colors.cyan}${query}${colors.reset}"`);
+  console.log(`${colors.dim}Found ${response.total} result(s) in ${response.took_ms}ms${colors.reset}\n`);
+
+  if (response.results.length === 0) {
+    console.log(`  ${colors.yellow}No matching runs, spans, or errors found.${colors.reset}`);
+    console.log(`  ${colors.dim}Try a broader term, removing a filter, or run 'aethertrace search rebuild'.${colors.reset}\n`);
+    return;
+  }
+
+  for (const r of response.results) {
+    const badgeColor =
+      r.type === 'error' ? colors.red :
+      r.type === 'tool' ? colors.cyan :
+      r.type === 'run' ? colors.magenta :
+      colors.green;
+
+    const badge = `[${r.type.toUpperCase()}]`.padEnd(10);
+    console.log(`  ${badgeColor}${colors.bold}${badge}${colors.reset} ${colors.bold}${r.title}${colors.reset}`);
+    if (r.subtitle) {
+      console.log(`             ${colors.dim}${r.subtitle}${colors.reset}`);
+    }
+    if (r.snippet) {
+      console.log(`             ${colors.dim}"${r.snippet}"${colors.reset}`);
+    }
+    console.log(`             ${colors.dim}ID: ${r.id} · Run: ${r.runId}${colors.reset}\n`);
+  }
+}
+
+async function handleErrors(options: { limit?: number; json?: boolean } = {}) {
+  const { sqlite } = getDatabase();
+  const errors = discoverErrors(sqlite, { limit: options.limit });
+
+  if (options.json) {
+    console.log(JSON.stringify({ errors, count: errors.length }, null, 2));
+    return;
+  }
+
+  printBanner();
+  console.log(`${colors.bold}⚠️  AetherTrace Cross-Run Error Discovery:${colors.reset}`);
+  console.log(`${colors.dim}Discovered ${errors.length} failure pattern(s) across trace history${colors.reset}\n`);
+
+  if (errors.length === 0) {
+    console.log(`  ${colors.green}✔ No execution errors or safety breaker trips detected across all runs!${colors.reset}\n`);
+    return;
+  }
+
+  console.log(`  ${'ERROR TYPE'.padEnd(28)} ${'COUNT'.padEnd(8)} ${'RUNS'.padEnd(8)} ${'SAMPLE RUN'.padEnd(30)}`);
+  console.log(`  ${'─'.repeat(28)} ${'─'.repeat(8)} ${'─'.repeat(8)} ${'─'.repeat(30)}`);
+
+  for (const err of errors) {
+    const errName = err.errorType.slice(0, 26).padEnd(28);
+    const countStr = String(err.count).padEnd(8);
+    const runsStr = String(err.runsCount).padEnd(8);
+    console.log(`  ${colors.red}${errName}${colors.reset} ${countStr} ${runsStr} ${colors.dim}${err.sampleRunId}${colors.reset}`);
+    if (err.message) {
+      console.log(`    ${colors.dim}Message: ${err.message.slice(0, 90)}${colors.reset}`);
+    }
+    if (err.affectedAgents.length > 0) {
+      console.log(`    ${colors.dim}Agents:  ${err.affectedAgents.join(', ')}${colors.reset}`);
+    }
+    console.log('');
+  }
+}
+
+async function handleClean() {
+  printBanner();
+  console.log(`${colors.yellow}Cleaning local trace database...${colors.reset}`);
+  const dbPath = resolve(process.cwd(), '.trace.sqlite');
+  let removed = 0;
+  for (const ext of ['', '-wal', '-shm']) {
+    const f = `${dbPath}${ext}`;
+    if (existsSync(f)) {
+      try {
+        unlinkSync(f);
+        removed++;
+      } catch {}
+    }
+  }
+  console.log(`${colors.green}✔ Removed ${removed} database file(s). Clean state restored.${colors.reset}\n`);
+}
+
+async function handleStatus(port: number = 4000) {
+  printBanner();
+  try {
+    const res = await fetch(`http://localhost:${port}/api/system/status`);
+    if (res.ok) {
+      const data = await res.json();
+      console.log(`${colors.bold}AetherTrace System Status (v${data.version}):${colors.reset}`);
+      console.log(`  Uptime:       ${data.uptime_seconds}s`);
+      console.log(`  Memory (RSS): ${data.memory?.rss_mb} MB`);
+      console.log(`  Runs Count:   ${data.database?.runs_count}`);
+      console.log(`  Spans Count:  ${data.database?.spans_count}`);
+      console.log(`  DB Path:      ${data.database?.path}`);
+      console.log(`  WS Clients:   ${data.telemetry?.active_ws_clients}\n`);
+      return;
+    }
+  } catch {}
+
+  const { db } = getDatabase();
+  const runsCount = (db.select().from(trace_runs).all() as any[]).length;
+  const spansCount = (db.select().from(trace_spans).all() as any[]).length;
+  console.log(`${colors.bold}AetherTrace Status (Offline/Local):${colors.reset}`);
+  console.log(`  Proxy:        Not running on port ${port}`);
+  console.log(`  Runs Count:   ${runsCount}`);
+  console.log(`  Spans Count:  ${spansCount}\n`);
+}
+
 async function runCli() {
   const args = process.argv.slice(2);
+  const dbIndex = args.findIndex((a) => a === '-d' || a === '--db');
+  if (dbIndex !== -1 && args[dbIndex + 1]) {
+    process.env.AETHERTRACE_DB_PATH = args[dbIndex + 1];
+    // Remove db flags from args so command positions are maintained
+    args.splice(dbIndex, 2);
+  }
+
   const command = args[0] || 'start';
 
   switch (command) {
@@ -429,6 +885,28 @@ async function runCli() {
     case 'sim':
       await handleSim();
       break;
+    case 'inspect': {
+      const runId = args[1];
+      await handleInspect(runId);
+      break;
+    }
+    case 'provenance': {
+      const runId = args[1];
+      const isJson = args.includes('--json');
+      await handleProvenance(runId, { json: isJson });
+      break;
+    }
+    case 'compare': {
+      const runA = args[1];
+      const runB = args[2];
+      await handleCompare(runA, runB);
+      break;
+    }
+    case 'reproduce': {
+      const runId = args[1];
+      await handleReproduce(runId);
+      break;
+    }
     case 'diff': {
       const baseId = args[1];
       const targetId = args[2];
@@ -456,6 +934,36 @@ async function runCli() {
       await handleImport(file);
       break;
     }
+    case 'search': {
+      const query = args[1] || '';
+      const isJson = args.includes('--json');
+      const limitIndex = args.findIndex((a) => a === '--limit');
+      const limit = limitIndex !== -1 ? Number(args[limitIndex + 1]) : undefined;
+      await handleSearch(query, { limit, json: isJson });
+      break;
+    }
+    case 'errors': {
+      const isJson = args.includes('--json');
+      const limitIndex = args.findIndex((a) => a === '--limit');
+      const limit = limitIndex !== -1 ? Number(args[limitIndex + 1]) : undefined;
+      await handleErrors({ limit, json: isJson });
+      break;
+    }
+    case 'status': {
+      const portIndex = args.findIndex((a) => a === '-p' || a === '--port');
+      const port = portIndex !== -1 ? Number(args[portIndex + 1]) || 4000 : 4000;
+      await handleStatus(port);
+      break;
+    }
+    case 'clean': {
+      await handleClean();
+      break;
+    }
+    case 'version':
+    case '--version':
+    case '-v':
+      printVersion();
+      break;
     case 'help':
     case '--help':
     case '-h':

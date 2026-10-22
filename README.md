@@ -22,9 +22,12 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
 [Quickstart](#-quickstart-in-30-seconds) •
+[Screenshots](#-visual-tour--ui-screenshots) •
+[Documentation](#-documentation) •
 [Step-by-Step Guide](#-step-by-step-guide) •
 [Architecture](#-architecture--packet-lifecycle) •
 [SDKs](#-step-12-auto-context-propagation-sdks) •
+[CLI](#️-cli-reference) •
 [Comparison](#-how-aethertrace-compares) •
 [Contributing](#-contributing)
 
@@ -58,6 +61,23 @@ AetherTrace is an open-source, 100% local-first telemetry workstation:
 - ⏳ **Time-Travel Fork & Replay:** Edit historical prompts or models at any node in the graph, branch off, and replay ancestor nodes in **0ms at $0.00** from local cache.
 - 📦 **Portable `.trace` Bundles:** Export any run into a self-contained `.trace.json` file (the AI equivalent of a `.pcap`). Teammates can import and inspect it with one click.
 
+---
+
+## 📸 Visual Tour & UI Screenshots
+
+<div align="center">
+
+| Execution DAG Canvas (`:3000`) | Side-by-Side Diff Arena |
+| :---: | :---: |
+| [![Execution DAG](screenshots/01_execution_dag.png)](screenshots/README.md#1-execution-dag--flight-deck-ui) | [![Diff Arena](screenshots/05_diff_arena.png)](screenshots/README.md#5-side-by-side-diff-arena) |
+
+| Event & Node Inspector | ⌘K SQLite FTS5 Command Palette |
+| :---: | :---: |
+| [![Inspector Drawer](screenshots/02_inspector_drawer.png)](screenshots/README.md#2-event--node-inspector-drawer) | [![Command Palette](screenshots/04_command_palette_search.png)](screenshots/README.md#4-command-palette-k--full-text-search) |
+
+</div>
+
+> 🔍 **Explore all 7 core interface screens in the [Screenshots Gallery](screenshots/README.md)** (Execution DAG, Inspector Drawer, Waterfall Timeline, ⌘K Command Palette, Diff Arena, Breakpoint Interceptor, Chaos Engineering).
 
 ---
 
@@ -476,6 +496,21 @@ AetherTrace/
 
 ---
 
+## 📚 Documentation
+
+Comprehensive guides, SDK references, and architectural specifications are located in the [`docs/`](./docs) directory:
+
+| Section | Guides & References |
+| :--- | :--- |
+| **Getting Started** | [Quickstart Guide](docs/getting-started/quickstart.md) • [Installation Guide](docs/getting-started/installation.md) • [Configuration Reference](docs/getting-started/configuration.md) |
+| **Core Guides** | [Interactive Debugger](docs/guides/debugging.md) • [Semantic Diffing & Time-Travel](docs/guides/diffing.md) • [CI Regression Gates](docs/guides/regression-gates.md) • [Search & ⌘K](docs/guides/search.md) |
+| **SDK References** | [TypeScript / Node.js SDK](docs/sdk/typescript.md) • [Python SDK](docs/sdk/python.md) |
+| **Operations & CLI** | [CLI Command Reference](docs/cli/commands.md) • [Docker & Production Deployment](docs/deployment/docker.md) • [Trace Format Specification](docs/trace-format/schema-v1.md) |
+| **Architecture** | [Current State & Verification](docs/architecture/current-state.md) • [Agent Execution Model](docs/architecture/agent-execution-model.md) • [Interactive Debugger](docs/architecture/debugger.md) • [Time-Travel Engine](docs/architecture/time-travel.md) |
+| **Contributing** | [Development Guide](docs/contributing/development.md) • [Testing Guide](docs/contributing/testing.md) • [System Architecture](docs/contributing/architecture.md) |
+
+---
+
 ## 📊 How AetherTrace Compares
 
 | Capability | **AetherTrace** ⚡ | LangSmith | Langfuse | Helicone |
@@ -488,6 +523,9 @@ AetherTrace/
 | **Side-by-Side DAG Diff Arena**| **✅ Yes (Split-screen & Cost Delta %)**| ❌ No | ❌ No | ❌ No |
 | **CI Regression Gate** | **✅ Yes (Budget & SLA assertions)** | ❌ No | ❌ No | ❌ No |
 | **Time-Travel Fork & Replay** | **✅ Yes (Edit & Branch)** | ❌ Read-only replays | ❌ Read-only replays | ❌ No |
+| **Git & Environment Provenance**| **✅ Yes (Commit, dirty, env hash)**| ❌ No | ❌ No | ❌ No |
+| **Secret Redaction & SSRF Shield**| **✅ Yes (Local-first PII scrub)**| ❌ Cloud ingestion | ❌ Cloud ingestion | ❌ No |
+| **Instant Search (⌘K FTS5)** | **✅ Yes (< 5ms local index)** | ⚠️ Cloud queries | ⚠️ Cloud queries | ⚠️ Cloud queries |
 | **Hardware Circuit Breakers**| **✅ Yes (Budget & Loop)** | ❌ No | ❌ No | ⚠️ Budget limits only |
 | **Portable `.trace` Files** | **✅ Yes (`.pcap` for AI)**| ❌ No | ❌ No | ❌ No |
 | **Zero-Dep Pricing Engine** | **✅ Yes (OpenAI/Anthropic/Local)**| Proprietary | Server-side | Server-side |
@@ -496,26 +534,28 @@ AetherTrace/
 
 ## 🧪 Testing & Verification
 
-AetherTrace is tested continuously for concurrency, streaming integrity, and deterministic replay:
+AetherTrace is tested continuously for concurrency, streaming integrity, and deterministic replay across 14 independent test suites:
 
 ```bash
-# 1. Type-check all packages in the monorepo
+# Monorepo type-checking and production compilation
 pnpm check-types
-
-# 2. Compile all packages and Next.js Flight Deck
 pnpm build
 
-# 3. Verify proxy server, SSE streaming, circuit breaker, and replay cache
-pnpm test:smoke
+# Foundational integration and end-to-end tests
+pnpm test:smoke            # Proxy server, SSE streaming, circuit breaker, replay cache
+pnpm test:e2e              # TypeScript SDK context propagation, .trace export/import
 
-# 4. Verify TypeScript SDK context propagation, .trace export, and SQLite reimport
-pnpm test:e2e
-
-# 5. Verify live mid-flight breakpoints, prompt mutation, and chaos fault injection
-pnpm test:phase4
-
-# 6. Verify side-by-side run diffing and CI regression assertions
-pnpm test:phase5
+# Phase-by-phase architectural regression gates
+pnpm test:phase1           # Trace foundation, atomic SQLite WAL persistence, topological sort
+pnpm test:phase2           # Semantic DAG ancestry, token fidelity, nested & parallel agents
+pnpm test:phase3           # Interactive debugger, live breakpoints, pause/resume, prompt mutation
+pnpm test:phase4           # Advanced replay, time travel, multi-generation forks, chaos injection
+pnpm test:phase5           # DAG diff arena, Needleman-Wunsch alignment, CI regression gates
+pnpm test:phase6           # Git provenance, dependency hashing, reproduction engine
+pnpm test:phase7           # Zero-PII secret redaction, SSRF shield, replay safety policies
+pnpm test:phase8           # SQLite FTS5 full-text search, keyboard shortcuts, quick filters
+pnpm test:phase9           # Design system tokens, high-density flight deck UI, responsive layout
+pnpm test:phase10          # Productization, packaging integrity, standalone examples, CLI flags
 ```
 
 ---
@@ -527,26 +567,33 @@ USAGE:
   npx aethertrace <command> [options]
 
 COMMANDS:
-  start                  Launch local proxy server (port 4000) & event bus
-  sim                    Execute a 5-step autonomous multi-agent simulation
-  diff <base_id> <target_id> Compare two runs side-by-side in an ASCII diff matrix
-  assert <trace.json>    Assert budget ceiling, latency SLA, and zero breaker trips
-  export <run_id>        Export a run to a portable .trace.json bundle
-  import <file.json>     Import a .trace.json bundle into local SQLite
-  help                   Show this help menu
+  start                         Launch local proxy server (port 4000) & WebSocket bus
+  sim                           Execute an autonomous 5-step multi-agent simulation
+  diff <base_id> <target_id>    Compare two runs side-by-side in an ASCII diff matrix
+  assert <trace.json>           Assert budget ceiling, latency SLA, and zero breaker trips
+  export <run_id>               Export a run to a portable .trace.json bundle
+  import <file.json>            Import a .trace.json bundle into local SQLite
+  reproduce <trace_file>        Reproduce a historical run verifying environment & git state
+  provenance <run_id_or_file>   Inspect git commit, dirty tree, and environment provenance
+  search <query>                Full-text search runs, spans, models, and errors
+  status                        Check system health, database record counts, and memory
+  clean                         Purge local trace database (.trace.sqlite)
+  version, --version, -v        Display installed CLI binary version
+  help, --help, -h              Show the help menu
 
 OPTIONS:
-  -o, --output <file>    Output destination file for export (default: run_<id>.trace.json)
-  -p, --port <number>    Port to listen on (default: 4000)
-  --max-cost <usd>       Max allowed USD spend for regression assertion
-  --max-latency <ms>     Max allowed latency in ms for regression assertion
+  -o, --output <file>           Output destination file for export (default: run_<id>.trace.json)
+  -p, --port <number>           Port to listen on (default: 4000)
+  --max-cost <usd>              Max allowed USD spend for regression assertion
+  --max-latency <ms>            Max allowed latency in ms for regression assertion
+  --dry-run                     Run reproduction in dry-run mode without external execution
 ```
 
 ---
 
 ## 🤝 Contributing
 
-Contributions are warmly welcome! Check out [CONTRIBUTING.md](./CONTRIBUTING.md) for architecture deep-dives and development instructions.
+Contributions are warmly welcome! Check out [CONTRIBUTING.md](./CONTRIBUTING.md) and our [Architecture Guide](docs/architecture/current-state.md) for technical deep-dives and development instructions.
 
 ---
 

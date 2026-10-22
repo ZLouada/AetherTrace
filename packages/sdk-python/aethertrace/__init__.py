@@ -3,6 +3,8 @@ AetherTrace Python SDK
 Zero-dependency automatic context propagation for AI agent workflows.
 """
 
+__version__ = "0.1.0"
+
 from contextvars import ContextVar
 import functools
 import uuid
@@ -91,6 +93,7 @@ class trace_agent:
 
     def __enter__(self):
         current = get_trace_context().copy()
+        current["parent_agent_name"] = current.get("agent_name")
         current["agent_name"] = self.agent_name
         if self.parent_span_id:
             current["parent_span_id"] = self.parent_span_id
@@ -108,4 +111,67 @@ class trace_agent:
                 return fn(*args, **kwargs)
         return wrapper
 
-__all__ = ["trace_run", "trace_agent", "get_trace_headers", "get_trace_context"]
+class trace_tool:
+    """Decorator or Context Manager for tracing a tool execution."""
+
+    def __init__(self, name: str = "default-tool", span_id: Optional[str] = None):
+        self.tool_name = name
+        self.span_id = span_id or f"span_tool_{uuid.uuid4().hex[:12]}"
+        self._token = None
+
+    def __enter__(self):
+        current = get_trace_context().copy()
+        current["parent_span_id"] = self.span_id
+        current["tool_name"] = self.tool_name
+        self._token = _trace_context.set(current)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._token:
+            _trace_context.reset(self._token)
+
+    def __call__(self, fn: Callable):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            with self:
+                return fn(*args, **kwargs)
+        return wrapper
+
+class trace_retry:
+    """Decorator or Context Manager for tracing an explicit retry attempt."""
+
+    def __init__(self, original_span_id: str, attempt: int = 1, reason: str = "retry"):
+        self.original_span_id = original_span_id
+        self.attempt = attempt
+        self.reason = reason
+        self.retry_span_id = f"span_retry_{uuid.uuid4().hex[:12]}"
+        self._token = None
+
+    def __enter__(self):
+        current = get_trace_context().copy()
+        current["parent_span_id"] = self.retry_span_id
+        current["retry_attempt"] = self.attempt
+        current["retry_reason"] = self.reason
+        self._token = _trace_context.set(current)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self._token:
+            _trace_context.reset(self._token)
+
+    def __call__(self, fn: Callable):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            with self:
+                return fn(*args, **kwargs)
+        return wrapper
+
+__all__ = [
+    "__version__",
+    "trace_run",
+    "trace_agent",
+    "trace_tool",
+    "trace_retry",
+    "get_trace_headers",
+    "get_trace_context"
+]

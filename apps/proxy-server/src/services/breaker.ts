@@ -136,6 +136,7 @@ export function tripCircuitBreaker(params: {
     cost_usd: 0.0,
     latency_ms: 0,
     cache_hit: 0,
+    usage_status: 'unavailable',
     request_hash: params.requestHash,
     created_at: now
   };

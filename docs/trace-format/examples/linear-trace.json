@@ -1,0 +1,70 @@
+{
+  "version": "1.0",
+  "exported_at": 1792620436500,
+  "run": {
+    "id": "run_linear_pipeline_01",
+    "name": "Sequential-Code-Reviewer",
+    "status": "completed",
+    "total_tokens": 84,
+    "total_cost_usd": 0.000632,
+    "parent_run_id": null,
+    "forked_at_span_id": null,
+    "created_at": 1792620436000
+  },
+  "spans": [
+    {
+      "id": "span_lin_01",
+      "run_id": "run_linear_pipeline_01",
+      "parent_span_id": null,
+      "span_type": "llm_call",
+      "agent_name": "IngestionAgent",
+      "model": "gpt-4o",
+      "request_payload": "{\"messages\":[{\"role\":\"user\",\"content\":\"Parse repository diff for commit abc123\"}]}",
+      "response_payload": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Diff parsed: 3 files changed, 45 insertions.\"}}]}",
+      "prompt_tokens": 15,
+      "completion_tokens": 12,
+      "cost_usd": 0.000195,
+      "latency_ms": 142,
+      "cache_hit": 0,
+      "usage_status": "reported",
+      "request_hash": "a1b2c3d4e5f60102030405060708090a1b2c3d4e5f60102030405060708090a1",
+      "created_at": 1792620436100
+    },
+    {
+      "id": "span_lin_02",
+      "run_id": "run_linear_pipeline_01",
+      "parent_span_id": "span_lin_01",
+      "span_type": "llm_call",
+      "agent_name": "SecurityScanner",
+      "model": "gpt-4o",
+      "request_payload": "{\"messages\":[{\"role\":\"user\",\"content\":\"Scan parsed diff for SQL injection vulnerabilities\"}]}",
+      "response_payload": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Clean. Prepared statements used across all query builders.\"}}]}",
+      "prompt_tokens": 18,
+      "completion_tokens": 14,
+      "cost_usd": 0.000230,
+      "latency_ms": 165,
+      "cache_hit": 0,
+      "usage_status": "reported",
+      "request_hash": "b2c3d4e5f60102030405060708090a1b2c3d4e5f60102030405060708090a1b2",
+      "created_at": 1792620436270
+    },
+    {
+      "id": "span_lin_03",
+      "run_id": "run_linear_pipeline_01",
+      "parent_span_id": "span_lin_02",
+      "span_type": "llm_call",
+      "agent_name": "SummaryReporter",
+      "model": "gpt-4o-mini",
+      "request_payload": "{\"messages\":[{\"role\":\"user\",\"content\":\"Generate final pull request signoff comment\"}]}",
+      "response_payload": "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"LGTM. Security audit passed with zero vulnerabilities detected.\"}}]}",
+      "prompt_tokens": 15,
+      "completion_tokens": 10,
+      "cost_usd": 0.000207,
+      "latency_ms": 110,
+      "cache_hit": 0,
+      "usage_status": "reported",
+      "request_hash": "c3d4e5f60102030405060708090a1b2c3d4e5f60102030405060708090a1b2c3",
+      "created_at": 1792620436400
+    }
+  ]
+}

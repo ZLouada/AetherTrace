@@ -5,24 +5,33 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 make g+
 
 FROM base AS builder
 WORKDIR /app
-COPY package.json pnpm-workspace.yaml turbo.json tsconfig.base.json ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json tsconfig.base.json ./
 COPY packages ./packages
 COPY apps ./apps
 COPY examples ./examples
 
-RUN pnpm install
+RUN pnpm install --frozen-lockfile
 RUN pnpm build
 
 FROM base AS runner
 WORKDIR /app
 ENV NODE_ENV=production
-ENV PORT=3000
-ENV PROXY_PORT=4000
+ENV PORT=4000
+ENV UI_PORT=3000
+ENV AETHERTRACE_DB_PATH=/data/.trace.sqlite
+
+# Create data directory for persistent SQLite database
+RUN mkdir -p /data && chmod 777 /data
+VOLUME ["/data"]
 
 COPY --from=builder /app /app
+COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 EXPOSE 3000
 EXPOSE 4000
 
-# Start Proxy Server on 4000 and Flight Deck UI on 3000 concurrently
-CMD ["sh", "-c", "node apps/proxy-server/dist/index.js & cd apps/flight-deck && npx next start -p 3000"]
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:4000/health || exit 1
+
+ENTRYPOINT ["docker-entrypoint.sh"]

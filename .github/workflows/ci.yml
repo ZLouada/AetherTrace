@@ -26,6 +26,11 @@ jobs:
           node-version: 22
           cache: 'pnpm'
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Install dependencies
         run: pnpm install
 
@@ -35,16 +40,48 @@ jobs:
       - name: Build all packages & apps
         run: pnpm build
 
-      - name: Run Phase 1 Smoke Test (Proxy & Breakers)
+      - name: Run Smoke Test (Proxy & Breakers)
         run: pnpm test:smoke
 
-      - name: Run Phase 3 E2E Test (SDK & .trace Bundles)
+      - name: Run E2E Test (SDK & .trace Bundles)
         run: pnpm test:e2e
 
-      - name: Run Phase 4 Live Breakpoint & Chaos Test
+      - name: Run Phase 1 Test (Trace Foundation & WAL Persistence)
+        run: pnpm test:phase1
+
+      - name: Run Phase 2 Test (Agent Execution Model & Semantic DAG)
+        run: pnpm test:phase2
+
+      - name: Run Phase 3 Test (Interactive Debugger & Breakpoints)
+        run: pnpm test:phase3
+
+      - name: Run Phase 4 Test (Live Breakpoints & Chaos Engineering)
         run: pnpm test:phase4
 
-      - name: Run Phase 5 Run Diff & CI Regression Test
+      - name: Run Phase 4 Advanced Test (Multi-Gen Time Travel & Fork)
+        run: pnpm test:phase4-advanced
+
+      - name: Run Phase 5 Test (Diff Arena & CI Regression Gates)
         run: pnpm test:phase5
+
+      - name: Run Phase 6 Test (Git Provenance & Reproducibility)
+        run: pnpm test:phase6
+
+      - name: Run Phase 7 Test (Security, Secret Redaction & SSRF Shield)
+        run: pnpm test:phase7
+
+      - name: Run Phase 8 Test (FTS5 Search & Developer UX)
+        run: pnpm test:phase8
+
+      - name: Run Phase 9 Test (Design System & Product UX)
+        run: pnpm test:phase9
+
+      - name: Run Phase 10 Test (Productization & Release Engineering)
+        run: pnpm test:phase10
+
+      - name: Verify Python SDK Package
+        run: |
+          pip install ./packages/sdk-python
+          python -c "import aethertrace; assert aethertrace.__version__ == '0.1.0'; print('Python SDK v' + aethertrace.__version__ + ' verified successfully')"
 
 

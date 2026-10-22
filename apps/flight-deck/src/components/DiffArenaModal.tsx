@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import {
-  X,
   Scale,
   ArrowRight,
   Zap,
@@ -11,21 +10,26 @@ import {
   DollarSign,
   TrendingDown,
   TrendingUp,
-  Cpu,
-  Layers,
   ArrowLeftRight,
-  CheckCircle2,
   AlertCircle,
-  Copy,
   ChevronDown,
-  ChevronRight
+  ChevronRight,
+  GitBranch
 } from 'lucide-react';
 import {
   fetchRunDiff,
   type TraceRun,
-  type RunDiffResult,
-  type SpanDiffItem
+  type RunDiffResult
 } from '@/lib/api';
+import {
+  Modal,
+  Button,
+  IconButton,
+  Badge,
+  Select,
+  EmptyState,
+  LoadingState
+} from '@/design-system';
 
 interface DiffArenaModalProps {
   isOpen: boolean;
@@ -132,182 +136,256 @@ export const DiffArenaModal: React.FC<DiffArenaModalProps> = ({
 
   const summary = diffResult?.summary;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 sm:p-6 overflow-hidden">
-      <div className="relative w-full max-w-7xl max-h-[92vh] flex flex-col bg-[#0b0f1a] border border-cyan-800/60 rounded-xl shadow-[0_0_50px_rgba(6,182,212,0.15)] overflow-hidden">
-        {/* Header Bar */}
-        <div className="p-4 border-b border-gray-800 bg-[#0d1322] flex flex-wrap items-center justify-between gap-4 shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-cyan-950 border border-cyan-700/60 flex items-center justify-center text-cyan-400">
-              <Scale className="w-5 h-5" />
-            </div>
-            <div>
-              <h2 className="text-sm font-bold text-white flex items-center gap-2">
-                Side-by-Side DAG Diff Arena
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-950 text-cyan-400 border border-cyan-800/80">
-                  v0.3.0
-                </span>
-              </h2>
-              <p className="text-xs text-gray-400">
-                Compare Model, Prompt & Cost Transitions across Time-Travel Forks & Runs
-              </p>
-            </div>
-          </div>
+  const runOptions = runs.map((r) => ({
+    value: r.id,
+    label: `${r.name} ($${r.total_cost_usd.toFixed(4)})`
+  }));
 
-          {/* Run Selectors */}
-          <div className="flex items-center gap-2 font-mono text-xs">
-            <div className="flex items-center gap-1.5 bg-[#111827] border border-gray-700 rounded-lg px-2.5 py-1">
-              <span className="text-gray-400 font-bold">Base (A):</span>
-              <select
+  const modalFooter = (
+    <div className="w-full flex items-center justify-between font-mono text-[11px] text-zinc-400">
+      <div className="flex items-center gap-4">
+        <span className="flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full bg-emerald-400" />
+          Shared Cache Prefix
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full bg-amber-400" />
+          Fork Point (Mutated)
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="w-2 h-2 rounded-full bg-purple-400" />
+          Diverged Downstream
+        </span>
+      </div>
+
+      <Button variant="secondary" size="sm" onClick={onClose}>
+        Close Arena
+      </Button>
+    </div>
+  );
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      maxWidth="7xl"
+      title={
+        <div className="flex items-center gap-2">
+          <span>DAG Diff Arena</span>
+          <Badge variant="outline" size="sm">v0.9.0</Badge>
+        </div>
+      }
+      subtitle="Compare model transitions, prompt deltas, latency, and costs across time-travel forks"
+      icon={<Scale className="w-4 h-4 text-zinc-200" />}
+      footer={modalFooter}
+      className="max-h-[94vh]"
+    >
+      <div className="space-y-4">
+        {/* Selector Controls Bar */}
+        <div className="p-3 rounded-lg bg-[#141418] border border-[#26262b] flex flex-wrap items-center justify-between gap-3 font-mono text-xs">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-2">
+              <span className="text-zinc-400 text-[11px] uppercase tracking-wider font-semibold">Base (A):</span>
+              <Select
                 value={baseRunId}
                 onChange={(e) => setBaseRunId(e.target.value)}
-                className="bg-transparent text-gray-200 outline-none text-xs cursor-pointer max-w-[180px] truncate"
+                selectSize="sm"
+                className="max-w-[240px]"
               >
-                {runs.map((r) => (
-                  <option key={`base-${r.id}`} value={r.id} className="bg-gray-900 text-gray-200">
-                    {r.name} (${r.total_cost_usd.toFixed(4)})
+                {runOptions.map((o) => (
+                  <option key={`base-${o.value}`} value={o.value} className="bg-[#111114] text-zinc-200">
+                    {o.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
 
-            <button
+            <IconButton
+              label="Swap Base and Target Runs"
+              size="sm"
+              variant="outline"
               onClick={handleSwap}
-              className="p-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors"
-              title="Swap Base and Target Runs"
             >
-              <ArrowLeftRight className="w-3.5 h-3.5 text-cyan-400" />
-            </button>
+              <ArrowLeftRight className="w-3.5 h-3.5" />
+            </IconButton>
 
-            <div className="flex items-center gap-1.5 bg-[#111827] border border-purple-800/70 rounded-lg px-2.5 py-1">
-              <span className="text-purple-400 font-bold">Target (B):</span>
-              <select
+            <div className="flex items-center gap-2">
+              <span className="text-purple-400 text-[11px] uppercase tracking-wider font-semibold">Target (B):</span>
+              <Select
                 value={targetRunId}
                 onChange={(e) => setTargetRunId(e.target.value)}
-                className="bg-transparent text-purple-200 outline-none text-xs cursor-pointer max-w-[180px] truncate"
+                selectSize="sm"
+                className="max-w-[240px]"
               >
-                {runs.map((r) => (
-                  <option key={`target-${r.id}`} value={r.id} className="bg-gray-900 text-purple-200">
-                    {r.name} (${r.total_cost_usd.toFixed(4)})
+                {runOptions.map((o) => (
+                  <option key={`target-${o.value}`} value={o.value} className="bg-[#111114] text-zinc-200">
+                    {o.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
-
-            <button
-              onClick={onClose}
-              className="ml-2 p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
           </div>
+
+          {summary && (
+            <div className="text-[11px] text-zinc-400 flex items-center gap-2">
+              <span>{summary.baseRunName}</span>
+              <span className="text-zinc-600">vs</span>
+              <span className="text-purple-300 font-semibold">{summary.targetRunName}</span>
+            </div>
+          )}
         </div>
 
         {/* Executive Scorecard Banner */}
         {summary && (
-          <div className="p-4 border-b border-gray-800/80 bg-[#101728] shrink-0">
+          <div className="p-3.5 rounded-lg bg-[#141418] border border-[#26262b] space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
               {/* Cost Delta Card */}
-              <div className="p-3 rounded-lg bg-[#0b0f1a] border border-gray-800 flex flex-col justify-between">
-                <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
-                  <span className="flex items-center gap-1.5 font-medium">
-                    <DollarSign className="w-3.5 h-3.5 text-cyan-400" />
-                    Total Spend Delta
+              <div className="p-3 rounded-md bg-[#18181c] border border-[#2a2a30] flex flex-col justify-between">
+                <div className="flex items-center justify-between text-xs text-zinc-400 mb-1.5 font-mono">
+                  <span className="flex items-center gap-1.5">
+                    <DollarSign className="w-3.5 h-3.5 text-zinc-300" />
+                    Spend Delta
                   </span>
                   {summary.costSavingsPercent > 0 ? (
-                    <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-emerald-400 bg-emerald-950/80 px-1.5 py-0.5 rounded border border-emerald-800">
-                      <TrendingDown className="w-3 h-3" />
+                    <Badge variant="status" status="completed" size="sm">
+                      <TrendingDown className="w-3 h-3 mr-0.5" />
                       -{summary.costSavingsPercent}% Saved
-                    </span>
+                    </Badge>
                   ) : summary.costSavingsPercent < 0 ? (
-                    <span className="inline-flex items-center gap-0.5 text-[11px] font-bold text-red-400 bg-red-950/80 px-1.5 py-0.5 rounded border border-red-800">
-                      <TrendingUp className="w-3 h-3" />
-                      +{Math.abs(summary.costSavingsPercent)}% More
-                    </span>
+                    <Badge variant="status" status="failed" size="sm">
+                      <TrendingUp className="w-3 h-3 mr-0.5" />
+                      +{Math.abs(summary.costSavingsPercent)}%
+                    </Badge>
                   ) : (
-                    <span className="text-[11px] font-mono text-gray-400">Equal</span>
+                    <Badge variant="neutral" size="sm">Equal</Badge>
                   )}
                 </div>
                 <div className="flex items-baseline gap-2 font-mono">
-                  <span className="text-gray-400 text-xs line-through">${summary.baseCostUsd.toFixed(6)}</span>
-                  <ArrowRight className="w-3 h-3 text-gray-500" />
-                  <span className={`text-base font-bold ${summary.costSavingsPercent > 0 ? 'text-emerald-400' : summary.costSavingsPercent < 0 ? 'text-red-400' : 'text-gray-200'}`}>
+                  <span className="text-zinc-500 text-xs line-through">${summary.baseCostUsd.toFixed(6)}</span>
+                  <ArrowRight className="w-3 h-3 text-zinc-600" />
+                  <span className={`text-sm font-bold ${summary.costSavingsPercent > 0 ? 'text-emerald-400' : summary.costSavingsPercent < 0 ? 'text-red-400' : 'text-zinc-200'}`}>
                     ${summary.targetCostUsd.toFixed(6)}
                   </span>
                 </div>
               </div>
 
               {/* Latency Delta Card */}
-              <div className="p-3 rounded-lg bg-[#0b0f1a] border border-gray-800 flex flex-col justify-between">
-                <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
-                  <span className="flex items-center gap-1.5 font-medium">
-                    <Clock className="w-3.5 h-3.5 text-yellow-400" />
-                    Total Latency Delta
+              <div className="p-3 rounded-md bg-[#18181c] border border-[#2a2a30] flex flex-col justify-between">
+                <div className="flex items-center justify-between text-xs text-zinc-400 mb-1.5 font-mono">
+                  <span className="flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-amber-400" />
+                    Latency Delta
                   </span>
-                  <span className={`text-[11px] font-mono font-bold ${summary.latencyDeltaMs <= 0 ? 'text-emerald-400' : 'text-yellow-400'}`}>
-                    {summary.latencyDeltaMs <= 0 ? `${summary.latencyDeltaMs}ms Faster` : `+${summary.latencyDeltaMs}ms Slower`}
+                  <span className={`text-[11px] font-bold ${summary.latencyDeltaMs <= 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    {summary.latencyDeltaMs <= 0 ? `${summary.latencyDeltaMs}ms` : `+${summary.latencyDeltaMs}ms`}
                   </span>
                 </div>
                 <div className="flex items-baseline gap-2 font-mono">
-                  <span className="text-gray-400 text-xs">{summary.baseLatencyMs}ms</span>
-                  <ArrowRight className="w-3 h-3 text-gray-500" />
-                  <span className="text-base font-bold text-gray-200">{summary.targetLatencyMs}ms</span>
+                  <span className="text-zinc-500 text-xs">{summary.baseLatencyMs}ms</span>
+                  <ArrowRight className="w-3 h-3 text-zinc-600" />
+                  <span className="text-sm font-bold text-zinc-200">{summary.targetLatencyMs}ms</span>
                 </div>
               </div>
 
               {/* Token Delta Card */}
-              <div className="p-3 rounded-lg bg-[#0b0f1a] border border-gray-800 flex flex-col justify-between">
-                <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
-                  <span className="flex items-center gap-1.5 font-medium">
-                    <Coins className="w-3.5 h-3.5 text-purple-400" />
+              <div className="p-3 rounded-md bg-[#18181c] border border-[#2a2a30] flex flex-col justify-between">
+                <div className="flex items-center justify-between text-xs text-zinc-400 mb-1.5 font-mono">
+                  <span className="flex items-center gap-1.5">
+                    <Coins className="w-3.5 h-3.5 text-zinc-300" />
                     Total Tokens
                   </span>
-                  <span className="text-[11px] font-mono text-gray-400">
-                    {summary.tokenDelta >= 0 ? `+${summary.tokenDelta}` : `${summary.tokenDelta}`} tokens
+                  <span className="text-[11px] text-zinc-400">
+                    {summary.tokenDelta >= 0 ? `+${summary.tokenDelta}` : `${summary.tokenDelta}`}
                   </span>
                 </div>
                 <div className="flex items-baseline gap-2 font-mono">
-                  <span className="text-gray-400 text-xs">{summary.baseTokens}</span>
-                  <ArrowRight className="w-3 h-3 text-gray-500" />
-                  <span className="text-base font-bold text-gray-200">{summary.targetTokens}</span>
+                  <span className="text-zinc-500 text-xs">{summary.baseTokens}</span>
+                  <ArrowRight className="w-3 h-3 text-zinc-600" />
+                  <span className="text-sm font-bold text-zinc-200">{summary.targetTokens}</span>
                 </div>
               </div>
 
-              {/* Execution Lineage Card */}
-              <div className="p-3 rounded-lg bg-[#0b0f1a] border border-gray-800 flex flex-col justify-between">
-                <span className="text-xs text-gray-400 font-medium flex items-center gap-1.5 mb-1">
-                  <GitFork className="w-3.5 h-3.5 text-cyan-400" />
+              {/* Lineage Classification Card */}
+              <div className="p-3 rounded-md bg-[#18181c] border border-[#2a2a30] flex flex-col justify-between">
+                <span className="text-xs text-zinc-400 font-medium font-mono flex items-center gap-1.5 mb-1.5">
+                  <GitFork className="w-3.5 h-3.5 text-zinc-300" />
                   Lineage Classification
                 </span>
                 <div className="flex items-center gap-2 text-xs font-mono">
-                  <span className="px-2 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800">
+                  <Badge variant="origin" origin="cached_replay" size="sm">
                     ⚡ {summary.identicalStepsCount} Cached
-                  </span>
-                  <span className="px-2 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-800">
+                  </Badge>
+                  <Badge variant="origin" origin="forked" size="sm">
                     🔀 {summary.divergedStepsCount} Diverged
-                  </span>
+                  </Badge>
                 </div>
               </div>
             </div>
+
+            {/* Provenance Diff & Reproducibility Assessment */}
+            {diffResult?.provenanceDiff && (
+              <div className="pt-2.5 border-t border-[#26262b] flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-zinc-400 font-semibold flex items-center gap-1.5 uppercase tracking-wider text-[11px] mr-1">
+                    <GitBranch className="w-3.5 h-3.5 text-zinc-300" />
+                    Provenance:
+                  </span>
+                  <Badge
+                    variant="status"
+                    status={diffResult.provenanceDiff.source.status === 'identical' ? 'completed' : 'failed'}
+                    size="sm"
+                  >
+                    {diffResult.provenanceDiff.source.status === 'identical' ? '✓ Same Git Head' : '✗ Git Differs'}
+                  </Badge>
+                  <Badge
+                    variant="status"
+                    status={diffResult.provenanceDiff.dependencies.status === 'identical' ? 'completed' : 'intercepted'}
+                    size="sm"
+                  >
+                    {diffResult.provenanceDiff.dependencies.status === 'identical' ? '✓ Same Lockfile' : '✗ Lockfile Differs'}
+                  </Badge>
+                  <Badge
+                    variant="status"
+                    status={diffResult.provenanceDiff.runtime.status === 'identical' ? 'completed' : 'intercepted'}
+                    size="sm"
+                  >
+                    {diffResult.provenanceDiff.runtime.status === 'identical' ? '✓ Same Runtime' : '✗ Runtime Differs'}
+                  </Badge>
+                  <Badge
+                    variant="status"
+                    status={diffResult.provenanceDiff.platform.status === 'identical' ? 'completed' : 'intercepted'}
+                    size="sm"
+                  >
+                    {diffResult.provenanceDiff.platform.status === 'identical' ? '✓ Same Platform' : '✗ Platform Differs'}
+                  </Badge>
+                </div>
+
+                <div className="flex items-center gap-1.5 text-[11px]">
+                  <span className="text-zinc-500">Interpretation:</span>
+                  <span className="px-2 py-0.5 rounded bg-[#18181c] border border-[#2a2a30] text-zinc-300 font-mono">
+                    {diffResult.provenanceDiff.scorecard.interpretation}
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
         {/* Diff Content Body */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="space-y-3">
           {isLoading ? (
-            <div className="py-20 text-center font-mono text-gray-400 flex flex-col items-center gap-2">
-              <Scale className="w-8 h-8 text-cyan-400 animate-spin" />
-              <span>Computing deterministic DAG diff between runs...</span>
-            </div>
+            <LoadingState message="Computing deterministic DAG diff between runs..." className="py-16" />
           ) : error ? (
-            <div className="p-6 rounded-lg bg-red-950/40 border border-red-800 text-red-300 text-center font-mono text-sm">
-              <AlertCircle className="w-6 h-6 text-red-400 mx-auto mb-2" />
+            <div className="p-4 rounded-lg bg-red-950/30 border border-red-900/60 text-red-300 text-center font-mono text-xs">
+              <AlertCircle className="w-5 h-5 text-red-400 mx-auto mb-1.5" />
               <span>{error}</span>
             </div>
           ) : !diffResult || diffResult.steps.length === 0 ? (
-            <div className="py-20 text-center font-mono text-gray-500 text-sm">
-              No span steps found to compare between selected runs.
-            </div>
+            <EmptyState
+              title="No Span Steps to Compare"
+              description="No overlapping or comparable span steps found between the selected runs."
+              className="py-16"
+            />
           ) : (
             diffResult.steps.map((step) => {
               const isExpanded = Boolean(expandedSteps[step.stepIndex]);
@@ -333,60 +411,76 @@ export const DiffArenaModal: React.FC<DiffArenaModalProps> = ({
               return (
                 <div
                   key={`step-${step.stepIndex}`}
-                  className={`rounded-xl border transition-all ${
+                  className={`rounded-lg border transition-all overflow-hidden ${
                     isForkPoint
-                      ? 'bg-[#151c2d] border-amber-500/80 shadow-[0_0_20px_rgba(245,158,11,0.15)] ring-1 ring-amber-500/40'
+                      ? 'bg-[#181512] border-amber-600/60 ring-1 ring-amber-500/30'
                       : isIdentical
-                      ? 'bg-[#0e1424] border-emerald-900/60'
-                      : 'bg-[#101524] border-purple-900/60'
+                      ? 'bg-[#121614] border-emerald-900/50'
+                      : 'bg-[#141418] border-[#26262b]'
                   }`}
                 >
                   {/* Step Header Accordion */}
                   <div
                     onClick={() => toggleStepExpanded(step.stepIndex)}
-                    className="p-3.5 flex items-center justify-between cursor-pointer hover:bg-gray-800/30 transition-colors select-none"
+                    className="p-3 flex items-center justify-between cursor-pointer hover:bg-white/[0.02] transition-colors select-none"
                   >
-                    <div className="flex items-center gap-3">
-                      <button className="text-gray-400 hover:text-white">
+                    <div className="flex items-center gap-2.5">
+                      <button className="text-zinc-400 hover:text-zinc-200">
                         {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                       </button>
 
-                      <div className="flex items-center gap-2">
-                        <span className="w-6 h-6 rounded-full bg-gray-800 flex items-center justify-center font-mono text-xs font-bold text-gray-300">
-                          {step.stepIndex}
-                        </span>
-                        <h3 className="font-bold text-sm text-gray-100 flex items-center gap-2">
-                          {step.agentName}
-                        </h3>
-                      </div>
+                      <span className="w-5 h-5 rounded bg-[#202024] border border-[#303036] flex items-center justify-center font-mono text-[11px] font-bold text-zinc-300">
+                        {step.stepIndex}
+                      </span>
+                      <h3 className="font-mono font-semibold text-xs text-zinc-100 flex items-center gap-2">
+                        {step.agentName}
+                      </h3>
 
                       {/* Classification Badge */}
                       {isIdentical && (
-                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-emerald-950 text-emerald-400 border border-emerald-800">
-                          <Zap className="w-3 h-3 text-emerald-400" />
-                          Shared Cached Prefix (0ms / $0)
-                        </span>
+                        <Badge variant="origin" origin="cached_replay" size="sm">
+                          <Zap className="w-3 h-3 mr-1" />
+                          Prefix Replay (0ms / $0)
+                        </Badge>
                       )}
 
                       {isForkPoint && (
-                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-amber-950 text-amber-300 border border-amber-600 animate-pulse">
-                          <GitFork className="w-3 h-3 text-amber-400" />
-                          Fork Point: Model / Prompt Mutated
-                        </span>
+                        <Badge variant="origin" origin="modified" size="sm">
+                          <GitFork className="w-3 h-3 mr-1" />
+                          Fork Point: Mutated
+                        </Badge>
+                      )}
+
+                      {step.status === 'modified' && (
+                        <Badge variant="origin" origin="modified" size="sm">
+                          ✏️ Modified Step
+                        </Badge>
+                      )}
+
+                      {step.status === 'inserted' && (
+                        <Badge variant="origin" origin="new_execution" size="sm">
+                          ➕ Inserted in Target
+                        </Badge>
+                      )}
+
+                      {step.status === 'removed' && (
+                        <Badge variant="status" status="failed" size="sm">
+                          ➖ Removed in Target
+                        </Badge>
                       )}
 
                       {step.status === 'diverged_downstream' && (
-                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-purple-950 text-purple-300 border border-purple-800">
-                          <ArrowDownRight className="w-3 h-3 text-purple-400" />
-                          Diverged Downstream Step
-                        </span>
+                        <Badge variant="origin" origin="forked" size="sm">
+                          <ArrowDownRight className="w-3 h-3 mr-1" />
+                          Diverged Downstream
+                        </Badge>
                       )}
                     </div>
 
-                    {/* Step Metrics Delta Pill */}
-                    <div className="flex items-center gap-4 text-xs font-mono">
+                    {/* Step Metrics Delta */}
+                    <div className="flex items-center gap-3 text-xs font-mono">
                       {step.deltas.modelChanged && (
-                        <span className="px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-800 font-semibold">
+                        <span className="px-1.5 py-0.5 rounded bg-[#1f1f24] text-zinc-300 border border-[#33333a] text-[11px]">
                           {step.baseSpan?.model || 'none'} ➔ {step.targetSpan?.model || 'none'}
                         </span>
                       )}
@@ -397,7 +491,7 @@ export const DiffArenaModal: React.FC<DiffArenaModalProps> = ({
                             ? 'text-emerald-400'
                             : step.deltas.costDeltaUsd > 0
                             ? 'text-red-400'
-                            : 'text-gray-400'
+                            : 'text-zinc-500'
                         }`}
                       >
                         {step.deltas.costDeltaUsd < 0
@@ -407,7 +501,7 @@ export const DiffArenaModal: React.FC<DiffArenaModalProps> = ({
                           : '$0.000000'}
                       </span>
 
-                      <span className="text-gray-400">
+                      <span className="text-zinc-400">
                         {step.deltas.latencyDeltaMs <= 0
                           ? `${step.deltas.latencyDeltaMs}ms`
                           : `+${step.deltas.latencyDeltaMs}ms`}
@@ -417,21 +511,21 @@ export const DiffArenaModal: React.FC<DiffArenaModalProps> = ({
 
                   {/* Expanded Step Comparison Body */}
                   {isExpanded && (
-                    <div className="p-4 border-t border-gray-800/80 bg-[#090d16]/70">
-                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 font-mono text-xs">
+                    <div className="p-3.5 border-t border-[#26262b] bg-[#101014]">
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3.5 font-mono text-xs">
                         {/* Left Column: Base Run Span */}
-                        <div className="p-3.5 rounded-lg bg-[#111827] border border-gray-800 space-y-2.5">
-                          <div className="flex items-center justify-between pb-2 border-b border-gray-800">
-                            <span className="font-bold text-gray-300 flex items-center gap-1.5">
-                              <span className="w-2 h-2 rounded-full bg-cyan-400" />
+                        <div className="p-3 rounded-md bg-[#16161a] border border-[#28282f] space-y-2">
+                          <div className="flex items-center justify-between pb-2 border-b border-[#28282f]">
+                            <span className="font-semibold text-zinc-200 flex items-center gap-1.5">
+                              <span className="w-2 h-2 rounded-full bg-zinc-400" />
                               Base Run ({summary?.baseRunName})
                             </span>
-                            <span className="px-2 py-0.5 rounded bg-gray-800 text-gray-300 text-[11px]">
+                            <Badge variant="outline" size="sm">
                               {step.baseSpan?.model || 'no-model'}
-                            </span>
+                            </Badge>
                           </div>
 
-                          <div className="flex items-center justify-between text-[11px] text-gray-400">
+                          <div className="flex items-center justify-between text-[11px] text-zinc-400">
                             <span>Cost: ${step.baseSpan?.cost_usd?.toFixed(6) || '0.000000'}</span>
                             <span>Tokens: {(step.baseSpan?.prompt_tokens || 0) + (step.baseSpan?.completion_tokens || 0)}</span>
                             <span>Latency: {step.baseSpan?.latency_ms || 0}ms</span>
@@ -439,20 +533,20 @@ export const DiffArenaModal: React.FC<DiffArenaModalProps> = ({
 
                           {/* Request Prompt */}
                           <div>
-                            <span className="text-[10px] text-gray-500 uppercase font-bold tracking-wider">
+                            <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">
                               Prompt Messages:
                             </span>
-                            <pre className="mt-1 p-2 rounded bg-black/60 border border-gray-800/80 text-gray-300 max-h-36 overflow-y-auto text-[11px] whitespace-pre-wrap">
+                            <pre className="mt-1 p-2 rounded bg-[#0d0d10] border border-[#202024] text-zinc-300 max-h-36 overflow-y-auto text-[11px] whitespace-pre-wrap">
                               {JSON.stringify(basePayload?.messages || basePayload || 'No payload recorded', null, 2)}
                             </pre>
                           </div>
 
                           {/* Assistant Completion */}
                           <div>
-                            <span className="text-[10px] text-gray-500 uppercase font-bold tracking-wider">
+                            <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">
                               Assistant Response:
                             </span>
-                            <div className="mt-1 p-2.5 rounded bg-black/60 border border-gray-800/80 text-gray-200 max-h-44 overflow-y-auto text-[11px] whitespace-pre-wrap leading-relaxed">
+                            <div className="mt-1 p-2 rounded bg-[#0d0d10] border border-[#202024] text-zinc-200 max-h-44 overflow-y-auto text-[11px] whitespace-pre-wrap leading-relaxed">
                               {baseAnswer || 'No response recorded'}
                             </div>
                           </div>
@@ -460,29 +554,27 @@ export const DiffArenaModal: React.FC<DiffArenaModalProps> = ({
 
                         {/* Right Column: Target / Forked Run Span */}
                         <div
-                          className={`p-3.5 rounded-lg border space-y-2.5 ${
+                          className={`p-3 rounded-md border space-y-2 ${
                             isForkPoint
-                              ? 'bg-[#141b2b] border-amber-600/60 shadow-[0_0_15px_rgba(245,158,11,0.1)]'
-                              : 'bg-[#111827] border-purple-800/60'
+                              ? 'bg-[#181410] border-amber-600/50'
+                              : 'bg-[#16161a] border-[#28282f]'
                           }`}
                         >
-                          <div className="flex items-center justify-between pb-2 border-b border-gray-800">
-                            <span className="font-bold text-purple-300 flex items-center gap-1.5">
+                          <div className="flex items-center justify-between pb-2 border-b border-[#28282f]">
+                            <span className="font-semibold text-purple-300 flex items-center gap-1.5">
                               <span className="w-2 h-2 rounded-full bg-purple-400" />
                               Target Run ({summary?.targetRunName})
                             </span>
-                            <span
-                              className={`px-2 py-0.5 rounded text-[11px] font-bold ${
-                                step.deltas.modelChanged
-                                  ? 'bg-amber-950 text-amber-300 border border-amber-600'
-                                  : 'bg-gray-800 text-gray-300'
-                              }`}
+                            <Badge
+                              variant={step.deltas.modelChanged ? 'origin' : 'outline'}
+                              origin={step.deltas.modelChanged ? 'modified' : undefined}
+                              size="sm"
                             >
                               {step.targetSpan?.model || 'no-model'}
-                            </span>
+                            </Badge>
                           </div>
 
-                          <div className="flex items-center justify-between text-[11px] text-gray-400">
+                          <div className="flex items-center justify-between text-[11px] text-zinc-400">
                             <span
                               className={
                                 step.deltas.costDeltaUsd < 0 ? 'text-emerald-400 font-semibold' : ''
@@ -496,14 +588,14 @@ export const DiffArenaModal: React.FC<DiffArenaModalProps> = ({
 
                           {/* Request Prompt */}
                           <div>
-                            <span className="text-[10px] text-gray-500 uppercase font-bold tracking-wider">
+                            <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">
                               Prompt Messages:
                             </span>
                             <pre
-                              className={`mt-1 p-2 rounded bg-black/60 border text-[11px] max-h-36 overflow-y-auto whitespace-pre-wrap ${
+                              className={`mt-1 p-2 rounded bg-[#0d0d10] border text-[11px] max-h-36 overflow-y-auto whitespace-pre-wrap ${
                                 step.deltas.promptChanged
                                   ? 'border-amber-700/80 text-amber-200'
-                                  : 'border-gray-800/80 text-gray-300'
+                                  : 'border-[#202024] text-zinc-300'
                               }`}
                             >
                               {JSON.stringify(targetPayload?.messages || targetPayload || 'No payload recorded', null, 2)}
@@ -512,10 +604,10 @@ export const DiffArenaModal: React.FC<DiffArenaModalProps> = ({
 
                           {/* Assistant Completion */}
                           <div>
-                            <span className="text-[10px] text-gray-500 uppercase font-bold tracking-wider">
+                            <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider">
                               Assistant Response:
                             </span>
-                            <div className="mt-1 p-2.5 rounded bg-black/60 border border-gray-800/80 text-gray-200 max-h-44 overflow-y-auto text-[11px] whitespace-pre-wrap leading-relaxed">
+                            <div className="mt-1 p-2 rounded bg-[#0d0d10] border border-[#202024] text-zinc-200 max-h-44 overflow-y-auto text-[11px] whitespace-pre-wrap leading-relaxed">
                               {targetAnswer || 'No response recorded'}
                             </div>
                           </div>
@@ -528,32 +620,7 @@ export const DiffArenaModal: React.FC<DiffArenaModalProps> = ({
             })
           )}
         </div>
-
-        {/* Footer */}
-        <div className="p-3 border-t border-gray-800 bg-[#0d1322] flex items-center justify-between shrink-0 font-mono text-xs text-gray-400">
-          <div className="flex items-center gap-4">
-            <span className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              Shared Cache Prefix
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-amber-400" />
-              Fork Point (Model/Prompt Mutated)
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-purple-400" />
-              Diverged Downstream
-            </span>
-          </div>
-
-          <button
-            onClick={onClose}
-            className="px-4 py-1.5 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-200 font-semibold transition-colors"
-          >
-            Close Arena
-          </button>
-        </div>
       </div>
-    </div>
+    </Modal>
   );
 };

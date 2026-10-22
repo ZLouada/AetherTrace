@@ -64,7 +64,7 @@ export function getLayoutedElements(
     type: 'smoothstep',
     animated: true,
     style: {
-      stroke: e.isBranch ? '#38bdf8' : '#4b5563',
+      stroke: e.isBranch ? '#ffffff' : '#52525b',
       strokeWidth: 2
     }
   }));

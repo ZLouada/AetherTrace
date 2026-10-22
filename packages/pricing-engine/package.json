@@ -1,6 +1,13 @@
 {
   "name": "@aethertrace/pricing-engine",
   "version": "0.1.0",
+  "description": "Zero-dependency multi-provider token cost pricing engine for AetherTrace",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -1,15 +1,19 @@
 import {
   type BreakpointConfig,
+  type BreakpointCondition,
   type PendingBreakpoint,
-  type BreakpointResolution
+  type BreakpointResolution,
+  evaluateBreakpointCondition
 } from '@aethertrace/core-schema';
 import { broadcastEvent } from '../broadcaster.js';
+import { randomUUID } from 'node:crypto';
 
 interface PendingHold {
   spanId: string;
   runId: string;
   agentName: string;
   model: string;
+  spanType?: string;
   originalPayload: any;
   createdAt: number;
   resolve: (res: BreakpointResolution) => void;
@@ -20,13 +24,17 @@ interface PendingHold {
 let breakpointConfig: BreakpointConfig = {
   enabled: false,
   matchAgentNames: [],
-  matchModels: []
+  matchModels: [],
+  conditions: []
 };
 
 const pendingBreakpoints = new Map<string, PendingHold>();
 
 export function getBreakpointConfig(): BreakpointConfig {
-  return { ...breakpointConfig };
+  return {
+    ...breakpointConfig,
+    conditions: breakpointConfig.conditions ? [...breakpointConfig.conditions] : []
+  };
 }
 
 export function updateBreakpointConfig(newConfig: Partial<BreakpointConfig>): BreakpointConfig {
@@ -34,7 +42,8 @@ export function updateBreakpointConfig(newConfig: Partial<BreakpointConfig>): Br
     ...breakpointConfig,
     ...newConfig,
     matchAgentNames: newConfig.matchAgentNames !== undefined ? [...newConfig.matchAgentNames] : breakpointConfig.matchAgentNames,
-    matchModels: newConfig.matchModels !== undefined ? [...newConfig.matchModels] : breakpointConfig.matchModels
+    matchModels: newConfig.matchModels !== undefined ? [...newConfig.matchModels] : breakpointConfig.matchModels,
+    conditions: newConfig.conditions !== undefined ? [...newConfig.conditions] : (breakpointConfig.conditions || [])
   };
 
   broadcastEvent({
@@ -45,7 +54,72 @@ export function updateBreakpointConfig(newConfig: Partial<BreakpointConfig>): Br
   return getBreakpointConfig();
 }
 
-export function shouldIntercept(agentName: string, model: string, hasHeaderBreakpoint: boolean): boolean {
+export function addBreakpointCondition(condition: Omit<BreakpointCondition, 'id'> & { id?: string }): BreakpointCondition {
+  const newCond: BreakpointCondition = {
+    id: condition.id || `cond_${randomUUID()}`,
+    enabled: condition.enabled !== false,
+    target: condition.target || 'all',
+    field: condition.field,
+    operator: condition.operator,
+    value: condition.value
+  };
+
+  const currentConditions = breakpointConfig.conditions || [];
+  updateBreakpointConfig({
+    conditions: [...currentConditions, newCond]
+  });
+
+  return newCond;
+}
+
+export function removeBreakpointCondition(id: string): boolean {
+  const currentConditions = breakpointConfig.conditions || [];
+  const initialLength = currentConditions.length;
+  const filtered = currentConditions.filter((c) => c.id !== id);
+  if (filtered.length !== initialLength) {
+    updateBreakpointConfig({ conditions: filtered });
+    return true;
+  }
+  return false;
+}
+
+export function toggleBreakpointCondition(id: string, enabled?: boolean): boolean {
+  const currentConditions = breakpointConfig.conditions || [];
+  let found = false;
+  const updated = currentConditions.map((c) => {
+    if (c.id === id) {
+      found = true;
+      return { ...c, enabled: enabled !== undefined ? enabled : !c.enabled };
+    }
+    return c;
+  });
+
+  if (found) {
+    updateBreakpointConfig({ conditions: updated });
+    return true;
+  }
+  return false;
+}
+
+export interface InterceptContext {
+  spanType?: string;
+  agentName?: string;
+  model?: string | null;
+  costUsd?: number;
+  latencyMs?: number;
+  requestPayload?: any;
+  responsePayload?: any;
+  statusCode?: number;
+  toolName?: string;
+  [key: string]: any;
+}
+
+export function shouldIntercept(
+  agentName: string,
+  model: string | null | undefined,
+  hasHeaderBreakpoint: boolean,
+  extraContext?: InterceptContext
+): boolean {
   if (hasHeaderBreakpoint) {
     return true;
   }
@@ -58,16 +132,33 @@ export function shouldIntercept(agentName: string, model: string, hasHeaderBreak
     return false;
   }
 
-  if (breakpointConfig.matchModels.length > 0 && !breakpointConfig.matchModels.includes(model)) {
+  if (breakpointConfig.matchModels.length > 0 && model && !breakpointConfig.matchModels.includes(model)) {
     return false;
+  }
+
+  const activeConditions = (breakpointConfig.conditions || []).filter((c) => c.enabled !== false);
+  if (activeConditions.length > 0) {
+    const evalContext: InterceptContext = {
+      spanType: extraContext?.spanType || 'llm_call',
+      agentName,
+      model: model || null,
+      ...extraContext
+    };
+
+    // Any matching active condition triggers breakpoint
+    const matchesAny = activeConditions.some((cond) => evaluateBreakpointCondition(cond, evalContext));
+    if (!matchesAny) {
+      return false;
+    }
   }
 
   return true;
 }
 
+
 export function holdRequest(
   spanId: string,
-  meta: { runId: string; agentName: string; model: string; originalPayload: any },
+  meta: { runId: string; agentName: string; model?: string | null; spanType?: string; originalPayload: any },
   timeoutMs: number = 120000
 ): Promise<BreakpointResolution> {
   return new Promise<BreakpointResolution>((resolve, reject) => {
@@ -86,7 +177,8 @@ export function holdRequest(
       spanId,
       runId: meta.runId,
       agentName: meta.agentName,
-      model: meta.model,
+      model: meta.model || 'unknown',
+      spanType: meta.spanType || 'llm_call',
       originalPayload: meta.originalPayload,
       createdAt: Date.now(),
       resolve,
@@ -101,7 +193,8 @@ export function holdRequest(
         spanId,
         runId: meta.runId,
         agentName: meta.agentName,
-        model: meta.model,
+        model: meta.model || 'unknown',
+        spanType: meta.spanType || 'llm_call',
         requestPayload: meta.originalPayload
       },
       runId: meta.runId,
@@ -109,6 +202,7 @@ export function holdRequest(
     });
   });
 }
+
 
 export function resolveBreakpoint(spanId: string, resolution: BreakpointResolution): boolean {
   const pending = pendingBreakpoints.get(spanId);

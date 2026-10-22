@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useCallback } from 'react';
+import React, { useEffect, useCallback } from 'react';
 import {
   ReactFlow,
   Background,
@@ -15,7 +15,8 @@ import {
 import { SpanNode } from './nodes/SpanNode';
 import { getLayoutedElements } from '@/lib/layout';
 import type { TraceSpan, TraceRun } from '@/lib/api';
-import { Network, Sparkles, ArrowDownUp, RefreshCw } from 'lucide-react';
+import { Network, ArrowDownUp } from 'lucide-react';
+import { Button, EmptyState, Badge } from '@/design-system';
 
 interface DagCanvasProps {
   selectedRun: TraceRun | null;
@@ -81,14 +82,12 @@ function InnerDagCanvas({
 
   if (!selectedRun) {
     return (
-      <div className="flex-1 h-full flex flex-col items-center justify-center bg-canvas p-6 select-none">
-        <div className="w-14 h-14 rounded-2xl bg-[#111827] border border-gray-800 flex items-center justify-center mb-4 shadow-xl">
-          <Network className="w-7 h-7 text-cyan-400 opacity-60" />
-        </div>
-        <h3 className="text-sm font-bold text-gray-300 mb-1 font-mono">No Trace Run Selected</h3>
-        <p className="text-xs text-gray-500 max-w-sm text-center leading-relaxed">
-          Select an agent trace session from the left sidebar or click &quot;Simulate Multi-Agent Run&quot; above to watch real-time execution DAGs.
-        </p>
+      <div className="flex-1 h-full flex items-center justify-center bg-canvas select-none">
+        <EmptyState
+          icon={<Network className="w-8 h-8 text-zinc-500" />}
+          title="No Trace Run Selected"
+          description="Select an agent trace session from the left sidebar or click 'Simulate Run' to observe real-time execution graphs."
+        />
       </div>
     );
   }
@@ -96,26 +95,26 @@ function InnerDagCanvas({
   return (
     <div className="relative flex-1 h-full bg-canvas overflow-hidden">
       {/* Canvas Top Bar Overlay */}
-      <div className="absolute top-4 left-4 z-10 flex items-center gap-2 pointer-events-auto">
-        <div className="bg-[#111827]/90 backdrop-blur-md border border-gray-800 px-3 py-1.5 rounded-lg flex items-center gap-3 text-xs shadow-lg">
-          <span className="font-semibold text-gray-200 flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
-            DAG View: <span className="text-cyan-300 font-mono">{selectedRun.name}</span>
-          </span>
-          <span className="text-gray-500 font-mono text-[11px]">
+      <div className="absolute top-3 left-3 z-10 flex items-center gap-2 pointer-events-auto">
+        <div className="bg-[#111114]/90 backdrop-blur-sm border border-[#2c2c32] px-2.5 py-1 rounded flex items-center gap-2 text-xs font-mono shadow-sm">
+          <span className="w-1.5 h-1.5 rounded-full bg-zinc-300 animate-pulse" />
+          <span className="text-zinc-400">DAG:</span>
+          <span className="text-zinc-200 font-semibold truncate max-w-[200px]">{selectedRun.name}</span>
+          <Badge variant="neutral" size="xs">
             {spans.length} {spans.length === 1 ? 'node' : 'nodes'}
-          </span>
+          </Badge>
         </div>
 
         {onToggleDirection && (
-          <button
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={onToggleDirection}
-            className="bg-[#111827]/90 backdrop-blur-md border border-gray-800 hover:border-gray-700 text-gray-300 px-2.5 py-1.5 rounded-lg flex items-center gap-1.5 text-xs shadow-lg transition-colors font-mono"
+            icon={<ArrowDownUp className="w-3 h-3 text-zinc-400" />}
             title="Toggle DAG Orientation (Top-to-Bottom / Left-to-Right)"
           >
-            <ArrowDownUp className="w-3.5 h-3.5 text-gray-400" />
-            <span>{direction === 'TB' ? 'Vertical' : 'Horizontal'}</span>
-          </button>
+            {direction === 'TB' ? 'Vertical' : 'Horizontal'}
+          </Button>
         )}
       </div>
 
@@ -131,17 +130,17 @@ function InnerDagCanvas({
         maxZoom={2.0}
         proOptions={{ hideAttribution: true }}
       >
-        <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#1e293b" />
+        <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#27272a" />
         <Controls position="bottom-left" showInteractive={false} />
         <MiniMap
           nodeColor={(node: any) => {
             if (node.data?.span?.span_type === 'guardrail_block') return '#ef4444';
-            if (node.data?.span?.cache_hit === 1) return '#10b981';
-            return '#06b6d4';
+            if (node.data?.span?.span_type === 'tool_call') return '#0284c7';
+            if (node.data?.span?.cache_hit === 1) return '#7dd3fc';
+            return '#52525b';
           }}
-          maskColor="rgba(9, 13, 22, 0.75)"
-          className="!bg-[#111827] !border !border-gray-800 !rounded-lg overflow-hidden !shadow-xl"
-          position="bottom-right"
+          maskColor="rgba(9, 9, 11, 0.75)"
+          className="!bg-[#111114] !border-[#2c2c32] !rounded"
         />
       </ReactFlow>
     </div>

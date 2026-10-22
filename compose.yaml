@@ -1,0 +1,32 @@
+services:
+  aethertrace:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: aethertrace/aethertrace:latest
+    container_name: aethertrace
+    restart: unless-stopped
+    ports:
+      - "3000:3000" # Flight Deck UI
+      - "4000:4000" # Interceptor Proxy & WebSocket Event Bus
+    environment:
+      - PORT=4000
+      - UI_PORT=3000
+      - AETHERTRACE_DB_PATH=/data/.trace.sqlite
+      - AETHERTRACE_MOCK=${AETHERTRACE_MOCK:-false}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      - AETHERTRACE_AUTH_TOKEN=${AETHERTRACE_AUTH_TOKEN:-}
+      - AETHERTRACE_ALLOW_PRIVATE_NETWORK=${AETHERTRACE_ALLOW_PRIVATE_NETWORK:-false}
+    volumes:
+      - aethertrace-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  aethertrace-data:
+    driver: local

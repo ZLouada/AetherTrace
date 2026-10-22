@@ -1,6 +1,13 @@
 {
   "name": "@aethertrace/core-schema",
   "version": "0.1.0",
+  "description": "Core SQLite schema, lineage tracking, provenance, and diffing engine for AetherTrace",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -10,8 +10,17 @@
     "test": "turbo run test",
     "test:smoke": "tsx examples/smoke-test.ts",
     "test:e2e": "tsx examples/sdk-export-test.ts",
+    "test:phase1": "tsx examples/phase1-integrity-concurrency-test.ts",
+    "test:phase2": "tsx examples/phase2-execution-model-test.ts",
+    "test:phase3": "tsx examples/phase3-debugger-test.ts",
     "test:phase4": "tsx examples/phase4-breakpoint-chaos-test.ts",
+    "test:phase4-advanced": "tsx examples/phase4-advanced-test.ts",
     "test:phase5": "tsx examples/phase5-diff-regression-test.ts",
+    "test:phase6": "tsx examples/phase6-git-reproducibility-test.ts",
+    "test:phase7": "tsx examples/phase7-security-trust-test.ts",
+    "test:phase8": "tsx examples/phase8-search-ux-test.ts",
+    "test:phase9": "tsx examples/phase9-product-ux-test.ts",
+    "test:phase10": "tsx examples/phase10-release-test.ts",
     "demo:sim": "tsx examples/multi-agent-sim.ts",
     "cli": "tsx packages/cli/src/bin.ts",
     "start:proxy": "pnpm --filter @aethertrace/proxy-server start",
@@ -20,8 +29,9 @@
   "devDependencies": {
     "@types/node": "^22.10.2",
     "@types/ws": "^8.5.13",
-    "turbo": "^2.3.3",
+    "puppeteer-core": "^25.15.0",
     "tsx": "^4.19.2",
+    "turbo": "^2.3.3",
     "typescript": "^5.7.2",
     "ws": "^8.18.0"
   }

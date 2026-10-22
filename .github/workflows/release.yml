@@ -1,0 +1,75 @@
+name: Release Validation
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  validate-release:
+    name: Dry-Run Release & Artifact Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Type check monorepo
+        run: pnpm check-types
+
+      - name: Build all packages & apps
+        run: pnpm build
+
+      - name: Run Phase 10 Release Invariant Tests
+        run: pnpm test:phase10
+
+      - name: Validate TypeScript SDK Package (Dry-Run Pack)
+        run: |
+          cd packages/sdk-ts
+          pnpm pack --dry-run
+
+      - name: Validate CLI Binary Package (Dry-Run Pack)
+        run: |
+          cd packages/cli
+          pnpm pack --dry-run
+
+      - name: Validate Core Schema Package (Dry-Run Pack)
+        run: |
+          cd packages/core-schema
+          pnpm pack --dry-run
+
+      - name: Validate Pricing Engine Package (Dry-Run Pack)
+        run: |
+          cd packages/pricing-engine
+          pnpm pack --dry-run
+
+      - name: Build & Validate Python Wheel (Dry-Run)
+        run: |
+          cd packages/sdk-python
+          python -m pip install --upgrade pip build twine
+          python -m build
+          python -m twine check dist/*
+
+      - name: Build Docker Container (Dry-Run)
+        run: |
+          docker build -t aethertrace:release-test .

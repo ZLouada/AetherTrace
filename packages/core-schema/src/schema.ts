@@ -8,6 +8,8 @@ export const trace_runs = sqliteTable('trace_runs', {
   total_cost_usd: real('total_cost_usd').notNull().default(0.0),
   parent_run_id: text('parent_run_id'),
   forked_at_span_id: text('forked_at_span_id'),
+  mutations: text('mutations'),
+  provenance: text('provenance'),
   created_at: integer('created_at', { mode: 'number' }).notNull()
 }, (table) => [
   index('trace_runs_created_at_idx').on(table.created_at),
@@ -19,7 +21,18 @@ export const trace_spans = sqliteTable('trace_spans', {
   id: text('id').primaryKey(),
   run_id: text('run_id').notNull().references(() => trace_runs.id, { onDelete: 'cascade' }),
   parent_span_id: text('parent_span_id'),
-  span_type: text('span_type', { enum: ['llm_call', 'tool_call', 'agent_state', 'guardrail_block'] }).notNull().default('llm_call'),
+  span_type: text('span_type', {
+    enum: [
+      'llm_call',
+      'tool_call',
+      'agent_state',
+      'guardrail_block',
+      'http_call',
+      'user_input',
+      'system_event',
+      'retry'
+    ]
+  }).notNull().default('llm_call'),
   agent_name: text('agent_name').notNull().default('default-agent'),
   model: text('model'),
   request_payload: text('request_payload'),
@@ -29,6 +42,11 @@ export const trace_spans = sqliteTable('trace_spans', {
   cost_usd: real('cost_usd').default(0.0),
   latency_ms: integer('latency_ms', { mode: 'number' }).default(0),
   cache_hit: integer('cache_hit', { mode: 'number' }).notNull().default(0),
+  execution_origin: text('execution_origin', {
+    enum: ['original', 'cached_replay', 'new_execution', 'modified', 'mocked']
+  }).default('original'),
+  source_span_id: text('source_span_id'),
+  usage_status: text('usage_status', { enum: ['reported', 'estimated', 'unavailable'] }).default('reported'),
   request_hash: text('request_hash').notNull(),
   created_at: integer('created_at', { mode: 'number' }).notNull()
 }, (table) => [
@@ -38,8 +56,18 @@ export const trace_spans = sqliteTable('trace_spans', {
   index('trace_spans_created_at_idx').on(table.created_at)
 ]);
 
-export type TraceRun = typeof trace_runs.$inferSelect;
+type InferredTraceRun = typeof trace_runs.$inferSelect;
+export type TraceRun = Omit<InferredTraceRun, 'mutations' | 'provenance'> & {
+  mutations?: string | null;
+  provenance?: string | null;
+};
 export type InsertTraceRun = typeof trace_runs.$inferInsert;
 
-export type TraceSpan = typeof trace_spans.$inferSelect;
+type InferredTraceSpan = typeof trace_spans.$inferSelect;
+export type TraceSpan = Omit<InferredTraceSpan, 'execution_origin' | 'source_span_id'> & {
+  execution_origin?: 'original' | 'cached_replay' | 'new_execution' | 'modified' | 'mocked' | null;
+  source_span_id?: string | null;
+};
 export type InsertTraceSpan = typeof trace_spans.$inferInsert;
+
+

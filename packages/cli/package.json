@@ -1,10 +1,17 @@
 {
   "name": "@aethertrace/cli",
   "version": "0.1.0",
+  "description": "Command-line interface and diagnostic workstation for AetherTrace",
+  "license": "MIT",
   "type": "module",
   "bin": {
     "aethertrace": "./dist/bin.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "check-types": "tsc --noEmit"

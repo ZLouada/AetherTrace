@@ -69,6 +69,8 @@ aethertrace/
    ```bash
    pnpm test:smoke   # Tests proxy interceptor, SSE streaming, circuit breaker, & replay cache
    pnpm test:e2e     # Tests TS SDK context propagation, .trace export, & SQLite import
+   # Run full regression suite:
+   pnpm test:phase1 && pnpm test:phase2 && pnpm test:phase3 && pnpm test:phase4 && pnpm test:phase5 && pnpm test:phase6 && pnpm test:phase7 && pnpm test:phase8 && pnpm test:phase9
    ```
 
 6. Start local development environment:
@@ -81,17 +83,14 @@ aethertrace/
 
 ---
 
-## Good First Issues
+## Detailed Contributor Guides
 
-Looking for somewhere to start? Check out issues tagged [`good first issue`](https://github.com/ZLouada/AetherTrace/labels/good%20first%20issue) or explore these areas:
-
-1. **Pricing Engine Models:** Add pricing rates for new models (e.g. Gemini 1.5, DeepSeek R1/V3, Mistral Large) in `packages/pricing-engine/src/registry.ts`.
-2. **LangChain / AutoGen / CrewAI Callbacks:** Create first-class adapter hooks that automatically map framework callbacks to AetherTrace headers.
-3. **Flight Deck UI Enhancements:**
-   - Add search and filter bars by agent name, model, or status in `RunSidebar.tsx`.
-   - Add keyboard shortcuts (`F` for Fork, `Space` for Pause/Resume, `Cmd+K` for Quick Search).
-   - Add timeline / waterfall gantt chart view alongside the DAG view.
-4. **CLI Improvements:** Add terminal ASCII tree view for `aethertrace view <run_id>`.
+For deeper guides, please consult the dedicated documentation:
+- 📖 [Local Development Guide](docs/contributing/development.md)
+- 🧪 [Testing & QA Guide](docs/contributing/testing.md)
+- 🏛️ [Contributor Architecture Guide](docs/contributing/architecture.md)
+- 🤝 [Code of Conduct](CODE_OF_CONDUCT.md)
+- 🛡️ [Security Policy](SECURITY.md)
 
 ---
 
@@ -99,8 +98,9 @@ Looking for somewhere to start? Check out issues tagged [`good first issue`](htt
 
 - **TypeScript:** Strict mode is mandatory (`"strict": true`). Avoid `any` where a typed schema or generic is feasible.
 - **Drizzle & SQLite:** Keep database transactions atomic. Always enable WAL mode (`PRAGMA journal_mode = WAL;`) for concurrent read/write throughput.
-- **Styling:** Flight Deck uses Tailwind CSS with high-contrast, dark-mode developer aesthetics (`#090d16` background, `#111827` cards, monospace typography for hashes and costs).
+- **Styling:** Flight Deck uses Tailwind CSS with the centralized design system in `src/design-system/` (black/grey palette, crisp 1px borders, monospace metrics, accessible focus states, and reduced-motion compliance).
 - **Zero Cloud Dependencies:** Do not introduce cloud-only drivers (e.g. Supabase, DynamoDB, Pinecone) into core packages. Everything must run offline on a laptop.
+- **Security by Default:** Never bypass the secret redaction pipeline, zero-eval sandbox, or SSRF shield.
 
 ---
 
@@ -110,15 +110,13 @@ Looking for somewhere to start? Check out issues tagged [`good first issue`](htt
    ```bash
    git checkout -b feat/my-awesome-feature
    ```
-2. Ensure all types and tests pass:
+2. Verify all gates locally:
    ```bash
-   pnpm check-types
-   pnpm build
-   pnpm test:smoke
-   pnpm test:e2e
+   pnpm check-types && pnpm build && pnpm test:smoke && pnpm test:e2e
    ```
 3. Commit with conventional commit messages:
    ```bash
    git commit -m "feat(pricing-engine): add deepseek-r1 pricing models"
    ```
-4. Push and open a Pull Request describing your motivation and attaching screenshots or test outputs.
+4. Push and open a Pull Request using the [PR template](.github/PULL_REQUEST_TEMPLATE.md).
+

@@ -1,3 +1,5 @@
+'use client';
+
 import React, { useState, useEffect } from 'react';
 import {
   X,
@@ -9,7 +11,6 @@ import {
   Cpu,
   Clock,
   DollarSign,
-  Zap,
   AlertTriangle,
   Play,
   RotateCcw,
@@ -17,35 +18,76 @@ import {
   FileText,
   PauseCircle,
   FlaskConical,
-  Ban
+  Ban,
+  Wrench,
+  Globe,
+  Sliders,
+  ChevronDown,
+  ChevronRight,
+  ArrowUpRight,
+  User,
+  ShieldAlert,
+  GitBranch,
+  GitCommit,
+  Package
 } from 'lucide-react';
-import type { TraceSpan, BreakpointResolution } from '@/lib/api';
-import { forkSpan, postChatCompletion } from '@/lib/api';
+import type { TraceSpan, TraceRun, RunProvenance, BreakpointResolution } from '@/lib/api';
+import { forkSpan, replaySpan, postChatCompletion } from '@/lib/api';
+import {
+  Button,
+  IconButton,
+  Badge,
+  DataRow,
+  Select,
+  Input,
+  Divider
+} from '@/design-system';
 
 interface InspectorDrawerProps {
   span: TraceSpan | null;
+  run?: TraceRun | null;
   onClose: () => void;
   onForkSuccess: (newRunId: string) => void;
+  onReplaySuccess?: (newRunId: string) => void;
+  onSelectParentSpan?: (parentSpanId: string) => void;
   isHeldBreakpoint?: boolean;
   onResolveBreakpoint?: (spanId: string, resolution: BreakpointResolution) => Promise<void>;
+  onToggleAgentBreakpoint?: (agentName: string) => void;
+  isAgentBreakpointed?: boolean;
 }
 
 export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
   span,
+  run,
   onClose,
   onForkSuccess,
+  onReplaySuccess,
+  onSelectParentSpan,
   isHeldBreakpoint,
-  onResolveBreakpoint
+  onResolveBreakpoint,
+  onToggleAgentBreakpoint,
+  isAgentBreakpointed
 }) => {
-  const [activeTab, setActiveTab] = useState<'inspector' | 'fork'>('inspector');
+  const [activeTab, setActiveTab] = useState<'inspector' | 'fork' | 'json'>('inspector');
   const [copiedHash, setCopiedHash] = useState(false);
   const [copiedResponse, setCopiedResponse] = useState(false);
+  const [copiedId, setCopiedId] = useState(false);
+
+  // Section collapse state
+  const [expandRequest, setExpandRequest] = useState(false);
+  const [expandResponse, setExpandResponse] = useState(true);
+  const [expandToolArgs, setExpandToolArgs] = useState(true);
+  const [expandToolResult, setExpandToolResult] = useState(true);
 
   // Breakpoint Intercept State
   const [editedPayloadJson, setEditedPayloadJson] = useState<string>('{}');
   const [mockResponseText, setMockResponseText] = useState<string>('');
   const [isResolving, setIsResolving] = useState<boolean>(false);
   const [interceptError, setInterceptError] = useState<string | null>(null);
+
+  // Replay State
+  const [isReplaying, setIsReplaying] = useState(false);
+  const [replayError, setReplayError] = useState<string | null>(null);
 
   // Fork IDE State
   const [forkModel, setForkModel] = useState<string>('gpt-4o');
@@ -62,6 +104,7 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
     setEditedPayloadJson(span.request_payload || '{}');
     setMockResponseText('');
     setInterceptError(null);
+    setReplayError(null);
 
     try {
       if (span.request_payload) {
@@ -90,10 +133,10 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
     span.response_payload?.includes('"awaiting_human":true')
   );
 
-  const handleCopyHash = () => {
-    navigator.clipboard.writeText(span.request_hash);
-    setCopiedHash(true);
-    setTimeout(() => setCopiedHash(false), 2000);
+  const handleCopyId = () => {
+    navigator.clipboard.writeText(span.id);
+    setCopiedId(true);
+    setTimeout(() => setCopiedId(false), 2000);
   };
 
   const handleCopyResponse = () => {
@@ -101,6 +144,21 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
       navigator.clipboard.writeText(span.response_payload);
       setCopiedResponse(true);
       setTimeout(() => setCopiedResponse(false), 2000);
+    }
+  };
+
+  const handleExecuteReplay = async () => {
+    setIsReplaying(true);
+    setReplayError(null);
+    try {
+      const res = await replaySpan(span.id);
+      if (onReplaySuccess) {
+        onReplaySuccess(res.newRunId);
+      }
+    } catch (err: any) {
+      setReplayError(err.message || 'Failed to replay from span');
+    } finally {
+      setIsReplaying(false);
     }
   };
 
@@ -119,7 +177,6 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
 
     setIsForking(true);
     try {
-      // 1. Fork historical trace DAG to create new branch run
       const forkRes = await forkSpan(span.id, {
         new_run_name: `fork-${span.agent_name}-${Date.now().toString().slice(-4)}`,
         reason: 'time_travel_mutation'
@@ -127,7 +184,6 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
 
       const newRunId = forkRes.newRunId;
 
-      // 2. Dispatch mutated chat completion against proxy on new run
       const payload = {
         model: forkModel,
         messages: parsedMessages,
@@ -141,7 +197,6 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
         'X-Mock-Upstream': 'true'
       });
 
-      // 3. Switch UI to view new forked run
       onForkSuccess(newRunId);
     } catch (err: any) {
       setForkJsonError(`Fork failed: ${err.message}`);
@@ -202,7 +257,6 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
     }
   };
 
-  // Pretty parse JSON payloads for inspector
   let parsedRequest: any = null;
   let parsedResponse: any = null;
   try {
@@ -212,305 +266,482 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
     if (span.response_payload) parsedResponse = JSON.parse(span.response_payload);
   } catch {}
 
+  let runProv: RunProvenance | null = null;
+  if (run?.provenance) {
+    if (typeof run.provenance === 'string') {
+      try {
+        runProv = JSON.parse(run.provenance);
+      } catch {}
+    } else if (typeof run.provenance === 'object') {
+      runProv = run.provenance as RunProvenance;
+    }
+  }
+
+  const createdTime = new Date(span.created_at).toISOString().split('T')[1]?.replace('Z', '') || `${span.created_at}`;
+
   return (
-    <aside className="w-[460px] h-full border-l border-gray-800 bg-[#0d1322] flex flex-col shrink-0 shadow-2xl z-20">
+    <aside className="w-[460px] h-full border-l border-[#202024] bg-[#0c0c0e] flex flex-col shrink-0 shadow-2xl z-20 select-none">
       {/* Drawer Header */}
-      <div className="p-4 border-b border-gray-800 bg-[#0b0f1a] flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Terminal className="w-4 h-4 text-cyan-400" />
-          <h2 className="text-xs font-bold uppercase tracking-wider text-gray-200">Span Inspector</h2>
-          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700 truncate max-w-[150px]">
-            {span.id}
-          </span>
+      <div className="px-3.5 py-2.5 border-b border-[#202024] bg-[#09090b] flex items-center justify-between">
+        <div className="flex items-center gap-2 min-w-0">
+          <Terminal className="w-3.5 h-3.5 text-zinc-300 shrink-0" />
+          <span className="text-xs font-mono font-semibold tracking-wide text-zinc-200 uppercase shrink-0">Inspector</span>
+          <button
+            onClick={handleCopyId}
+            className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded bg-[#18181c] text-zinc-400 hover:text-white border border-[#2c2c32] truncate max-w-[170px] transition-colors"
+            title="Click to copy span ID"
+          >
+            <span className="truncate">{span.id}</span>
+            {copiedId ? <Check className="w-2.5 h-2.5 text-white" /> : <Copy className="w-2.5 h-2.5" />}
+          </button>
         </div>
-        <button
-          onClick={onClose}
-          className="p-1 text-gray-400 hover:text-gray-200 hover:bg-gray-800 rounded transition-colors"
-          title="Close Inspector"
-        >
+        <IconButton label="Close Inspector (Esc)" size="sm" onClick={onClose}>
           <X className="w-4 h-4" />
-        </button>
+        </IconButton>
       </div>
 
       {/* Tabs Bar */}
-      <div className="flex items-center border-b border-gray-800 bg-[#0e1626] px-4 font-mono text-xs">
+      <div className="flex items-center border-b border-[#202024] bg-[#111114] px-3 font-mono text-xs">
         <button
           onClick={() => setActiveTab('inspector')}
-          className={`py-2.5 px-3 border-b-2 font-medium transition-colors flex items-center gap-1.5 ${
+          className={`py-2 px-3 border-b-2 font-medium transition-colors flex items-center gap-1.5 ${
             activeTab === 'inspector'
-              ? 'border-cyan-400 text-cyan-300'
-              : 'border-transparent text-gray-400 hover:text-gray-300'
+              ? 'border-white text-white'
+              : 'border-transparent text-zinc-400 hover:text-zinc-200'
           }`}
         >
           <FileText className="w-3.5 h-3.5" />
-          Payload Inspector
+          Overview
         </button>
 
         <button
           onClick={() => setActiveTab('fork')}
-          className={`py-2.5 px-3 border-b-2 font-medium transition-colors flex items-center gap-1.5 ${
+          className={`py-2 px-3 border-b-2 font-medium transition-colors flex items-center gap-1.5 ${
             activeTab === 'fork'
-              ? 'border-purple-400 text-purple-300'
-              : 'border-transparent text-gray-400 hover:text-gray-300'
+              ? 'border-white text-white'
+              : 'border-transparent text-zinc-400 hover:text-zinc-200'
           }`}
         >
-          <RotateCcw className="w-3.5 h-3.5 text-purple-400" />
-          Time-Travel Fork IDE
+          <GitFork className="w-3.5 h-3.5" />
+          Fork IDE
+        </button>
+
+        <button
+          onClick={() => setActiveTab('json')}
+          className={`py-2 px-3 border-b-2 font-medium transition-colors flex items-center gap-1.5 ${
+            activeTab === 'json'
+              ? 'border-white text-white'
+              : 'border-transparent text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          <Code2 className="w-3.5 h-3.5" />
+          JSON
         </button>
       </div>
 
       {/* Drawer Content */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 font-mono text-xs">
-        {/* Live Breakpoint Intercept Box (Visible when call is held mid-flight) */}
+      <div className="flex-1 overflow-y-auto p-3.5 space-y-3 font-mono text-xs select-text">
+        {/* Live Breakpoint Intercept Box */}
         {isIntercepted && (
-          <div className="p-4 rounded-xl bg-amber-950/40 border-2 border-amber-500 shadow-[0_0_25px_rgba(245,158,11,0.25)] space-y-3 font-mono">
+          <div className="p-3 rounded bg-amber-950/30 border border-amber-600/70 space-y-2.5">
             <div className="flex items-center justify-between">
-              <span className="flex items-center gap-2 text-xs font-bold text-amber-300 uppercase tracking-wide">
+              <span className="flex items-center gap-1.5 text-xs font-semibold text-amber-300 uppercase">
                 <PauseCircle className="w-4 h-4 text-amber-400 animate-pulse" />
-                Live Mid-Flight Breakpoint
+                Paused at Breakpoint
               </span>
-              <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/50 uppercase font-bold animate-pulse">
-                Awaiting Human
-              </span>
+              <Badge variant="origin" origin="modified" size="xs">
+                Awaiting Operator
+              </Badge>
             </div>
 
             <p className="text-[11px] text-amber-200/90 font-sans leading-relaxed">
-              This agent call is suspended mid-flight. You can mutate the prompt payload before forwarding to the LLM, mock a direct reply ($0.00 cost), or abort the call.
+              Execution is suspended. Mutate prompt payload before forwarding, return a synthetic mock ($0.00 cost), or abort.
             </p>
 
             {/* Editable Request Payload */}
             <div className="space-y-1">
               <label className="text-[10px] text-amber-300 uppercase font-semibold flex justify-between">
-                <span>Mutate Request Payload (JSON)</span>
-                <span className="text-amber-500/80 font-normal">Edit prompt before forward</span>
+                <span>Mutate Request Payload</span>
+                <span className="text-amber-500/80 font-normal">JSON</span>
               </label>
               <textarea
-                rows={5}
+                rows={4}
                 value={editedPayloadJson}
                 onChange={(e) => setEditedPayloadJson(e.target.value)}
-                className="w-full bg-[#080c14] border border-amber-700/60 rounded-lg p-2.5 text-[11px] text-amber-100 font-mono focus:outline-none focus:border-amber-400 resize-none leading-relaxed"
+                className="w-full bg-[#0e0e11] border border-amber-700/60 rounded p-2 text-[11px] text-amber-100 font-mono focus:outline-none focus:border-amber-400 resize-none leading-relaxed"
               />
             </div>
 
             {/* Mock Response Input */}
             <div className="space-y-1">
               <label className="text-[10px] text-amber-300 uppercase font-semibold block">
-                Mock Response Override (Optional)
+                Mock Response Override
               </label>
-              <input
-                type="text"
-                placeholder="e.g. Synthetic response text returned instantly with $0.00 cost..."
+              <Input
+                placeholder="Synthetic answer returned instantly with $0.00 cost..."
                 value={mockResponseText}
                 onChange={(e) => setMockResponseText(e.target.value)}
-                className="w-full bg-[#080c14] border border-amber-700/60 rounded-lg px-2.5 py-1.5 text-[11px] text-gray-200 font-mono focus:outline-none focus:border-amber-400"
               />
             </div>
 
             {interceptError && (
-              <p className="text-[11px] text-red-400 bg-red-950/60 border border-red-800 p-2 rounded">
+              <p className="text-[11px] text-rose-300 bg-rose-950/60 border border-rose-800 p-2 rounded">
                 {interceptError}
               </p>
             )}
 
-            {/* Three Action Buttons */}
-            <div className="grid grid-cols-3 gap-2 pt-1">
-              <button
-                onClick={handleResolveResume}
-                disabled={isResolving}
-                className="flex items-center justify-center gap-1.5 py-2 px-1.5 rounded-lg font-bold text-[10px] bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_0_12px_rgba(16,185,129,0.35)] transition-all active:scale-95 disabled:opacity-50"
-                title="Resume call, forwarding modified payload to upstream LLM"
-              >
-                <Play className="w-3 h-3 fill-current" />
-                <span>Resume (Edited)</span>
-              </button>
-
-              <button
-                onClick={handleResolveMock}
-                disabled={isResolving}
-                className="flex items-center justify-center gap-1.5 py-2 px-1.5 rounded-lg font-bold text-[10px] bg-cyan-600 hover:bg-cyan-500 text-white shadow-[0_0_12px_rgba(6,182,212,0.35)] transition-all active:scale-95 disabled:opacity-50"
-                title="Return mock answer immediately with $0.00 cost"
-              >
-                <FlaskConical className="w-3 h-3" />
-                <span>Return Mock ($0)</span>
-              </button>
-
-              <button
-                onClick={handleResolveAbort}
-                disabled={isResolving}
-                className="flex items-center justify-center gap-1.5 py-2 px-1.5 rounded-lg font-bold text-[10px] bg-rose-700 hover:bg-rose-600 text-white shadow-[0_0_12px_rgba(225,29,72,0.35)] transition-all active:scale-95 disabled:opacity-50"
-                title="Abort call immediately with HTTP 403"
-              >
-                <Ban className="w-3 h-3" />
-                <span>Abort (403)</span>
-              </button>
+            {/* Action Buttons */}
+            <div className="grid grid-cols-3 gap-1.5 pt-1">
+              <Button variant="primary" size="xs" onClick={handleResolveResume} disabled={isResolving} icon={<Play className="w-2.5 h-2.5 fill-current" />}>
+                Resume
+              </Button>
+              <Button variant="secondary" size="xs" onClick={handleResolveMock} disabled={isResolving} icon={<FlaskConical className="w-2.5 h-2.5" />}>
+                Mock ($0)
+              </Button>
+              <Button variant="danger" size="xs" onClick={handleResolveAbort} disabled={isResolving} icon={<Ban className="w-2.5 h-2.5" />}>
+                Abort
+              </Button>
             </div>
           </div>
         )}
 
-        {activeTab === 'inspector' ? (
+        {activeTab === 'inspector' && (
           <>
-            {/* Meta Pill Grid */}
-            <div className="grid grid-cols-2 gap-2 text-[11px]">
-              <div className="p-2.5 rounded-lg bg-[#111827] border border-gray-800">
-                <span className="text-gray-500 block text-[10px] uppercase">Agent</span>
-                <span className="font-semibold text-gray-200">{span.agent_name}</span>
-              </div>
-              <div className="p-2.5 rounded-lg bg-[#111827] border border-gray-800">
-                <span className="text-gray-500 block text-[10px] uppercase">Model</span>
-                <span className="font-semibold text-cyan-300">{span.model}</span>
-              </div>
-              <div className="p-2.5 rounded-lg bg-[#111827] border border-gray-800">
-                <span className="text-gray-500 block text-[10px] uppercase">Latency</span>
-                <span className="font-semibold text-gray-200 flex items-center gap-1">
-                  <Clock className="w-3 h-3 text-gray-400" />
-                  {span.cache_hit === 1 ? '0ms (Cached)' : `${span.latency_ms}ms`}
-                </span>
-              </div>
-              <div className="p-2.5 rounded-lg bg-[#111827] border border-gray-800">
-                <span className="text-gray-500 block text-[10px] uppercase">Cost</span>
-                <span className="font-semibold text-emerald-400">
-                  ${span.cost_usd > 0 ? span.cost_usd.toFixed(6) : '0.000000'}
-                </span>
-              </div>
+            {/* Quick Actions Strip */}
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleExecuteReplay}
+                disabled={isReplaying}
+                isLoading={isReplaying}
+                icon={<RotateCcw className="w-3 h-3 text-zinc-300" />}
+                title="Replay historical execution prefix from this span"
+              >
+                Replay From Here
+              </Button>
+
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => setActiveTab('fork')}
+                icon={<GitFork className="w-3 h-3" />}
+                title="Branch execution from this span"
+              >
+                Fork From Here
+              </Button>
             </div>
 
-            {/* SHA-256 Invariant Request Hash */}
-            <div className="p-3 rounded-lg bg-[#111827] border border-gray-800 space-y-1">
-              <div className="flex items-center justify-between text-[10px] text-gray-400 uppercase">
-                <span className="flex items-center gap-1 text-cyan-400 font-bold">
-                  <Zap className="w-3 h-3 text-cyan-400" />
-                  Deterministic Request Hash
-                </span>
-                <button
-                  onClick={handleCopyHash}
-                  className="flex items-center gap-1 hover:text-white transition-colors"
-                  title="Copy SHA-256 Hash"
-                >
-                  {copiedHash ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                  {copiedHash ? 'Copied' : 'Copy'}
-                </button>
-              </div>
-              <p className="text-[11px] text-gray-300 break-all bg-gray-950 p-2 rounded border border-gray-900 selection:bg-cyan-500/30">
-                {span.request_hash}
+            {replayError && (
+              <p className="text-[11px] text-rose-300 bg-rose-950/40 border border-rose-900 p-2 rounded">
+                {replayError}
               </p>
+            )}
+
+            {/* Lineage & Origin Card */}
+            <div className="p-2.5 rounded bg-[#111114] border border-[#2c2c32] space-y-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-zinc-500 text-[10px] uppercase font-semibold">Origin</span>
+                <Badge
+                  variant={
+                    span.execution_origin === 'cached_replay' || span.cache_hit === 1
+                      ? 'origin'
+                      : span.execution_origin === 'modified'
+                      ? 'origin'
+                      : span.execution_origin === 'mocked'
+                      ? 'origin'
+                      : 'neutral'
+                  }
+                  origin={span.execution_origin as any}
+                  size="xs"
+                >
+                  {span.execution_origin === 'cached_replay' || span.cache_hit === 1
+                    ? 'CACHED REPLAY'
+                    : span.execution_origin === 'modified'
+                    ? 'MODIFIED'
+                    : span.execution_origin === 'mocked'
+                    ? 'MOCKED'
+                    : span.execution_origin === 'new_execution'
+                    ? 'NEW EXECUTION'
+                    : 'ORIGINAL'}
+                </Badge>
+              </div>
+              {span.source_span_id && (
+                <DataRow label="Source Span ID" value={span.source_span_id} copyable />
+              )}
             </div>
+
+            {/* Run Provenance Card */}
+            {run && (
+              <div className="p-2.5 rounded bg-[#111114] border border-[#2c2c32] space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <GitBranch className="w-3.5 h-3.5 text-zinc-400" />
+                    <span className="text-zinc-400 text-[10px] uppercase font-semibold">Run Provenance</span>
+                  </div>
+                  {runProv?.reproducibility?.status && (
+                    <Badge variant="neutral" size="xs">
+                      {runProv.reproducibility.status.replace('_', ' ').toUpperCase()}
+                    </Badge>
+                  )}
+                </div>
+
+                {runProv?.git && (
+                  <DataRow
+                    label="Git Commit"
+                    value={`${runProv.git.branch || 'detached'}@${runProv.git.short_sha || runProv.git.commit_sha?.slice(0, 7)} (${runProv.git.dirty ? 'DIRTY' : 'CLEAN'})`}
+                    copyValue={runProv.git.commit_sha}
+                    copyable
+                  />
+                )}
+
+                {runProv?.dependencies && (
+                  <DataRow
+                    label="Lockfile"
+                    value={`${runProv.dependencies.lockfile_type} (${runProv.dependencies.lockfile_fingerprint?.slice(0, 8)})`}
+                    copyValue={runProv.dependencies.lockfile_fingerprint}
+                    copyable
+                  />
+                )}
+
+                {runProv?.environment && (
+                  <DataRow
+                    label="Environment"
+                    value={`${runProv.environment.runtime?.name} ${runProv.environment.runtime?.version} · ${runProv.environment.os}`}
+                  />
+                )}
+              </div>
+            )}
+
+            {/* Technical Metrics Card */}
+            <div className="p-2.5 rounded bg-[#111114] border border-[#2c2c32] space-y-1">
+              <DataRow label="Span Type" value={span.span_type.toUpperCase()} />
+              <DataRow label="Agent Name" value={span.agent_name} />
+              <DataRow label="Target Model" value={span.model || '—'} />
+              <DataRow label="Latency" value={span.cache_hit === 1 ? '0ms (cached)' : `${span.latency_ms}ms`} />
+              <DataRow label="Cost USD" value={`$${span.cost_usd > 0 ? span.cost_usd.toFixed(6) : '0.000000'}`} />
+              <DataRow
+                label="Tokens"
+                value={`${span.prompt_tokens + span.completion_tokens} (${span.prompt_tokens} in / ${span.completion_tokens} out)`}
+              />
+              <DataRow
+                label="Parent Span"
+                value={
+                  span.parent_span_id ? (
+                    <button
+                      onClick={() => onSelectParentSpan && onSelectParentSpan(span.parent_span_id!)}
+                      className="text-zinc-200 hover:text-white flex items-center gap-1 font-mono text-[10px]"
+                    >
+                      <span>{span.parent_span_id}</span>
+                      <ArrowUpRight className="w-2.5 h-2.5" />
+                    </button>
+                  ) : (
+                    'None (Root)'
+                  )
+                }
+              />
+            </div>
+
+            {/* Tool Calls Section */}
+            {span.span_type === 'tool_call' && parsedRequest && (
+              <div className="p-2.5 rounded bg-[#111114] border border-[#2c2c32] space-y-2">
+                <div className="flex items-center justify-between text-xs font-semibold text-zinc-200">
+                  <span className="flex items-center gap-1.5 text-sky-400">
+                    <Wrench className="w-3.5 h-3.5" />
+                    Tool: <span className="font-mono text-white">{parsedRequest.tool_name || 'custom_tool'}</span>
+                  </span>
+                </div>
+
+                {parsedRequest.arguments && (
+                  <div>
+                    <button
+                      onClick={() => setExpandToolArgs((p) => !p)}
+                      className="text-[10px] text-zinc-400 uppercase font-semibold flex items-center gap-1 hover:text-zinc-200 mb-1"
+                    >
+                      {expandToolArgs ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                      Input Arguments
+                    </button>
+                    {expandToolArgs && (
+                      <pre className="p-2 rounded bg-black/80 border border-[#202024] text-[11px] text-zinc-300 overflow-x-auto max-h-36">
+                        {JSON.stringify(parsedRequest.arguments, null, 2)}
+                      </pre>
+                    )}
+                  </div>
+                )}
+
+                {parsedResponse && (
+                  <div>
+                    <button
+                      onClick={() => setExpandToolResult((p) => !p)}
+                      className="text-[10px] text-zinc-400 uppercase font-semibold flex items-center gap-1 hover:text-zinc-200 mb-1"
+                    >
+                      {expandToolResult ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                      Tool Output {parsedResponse.is_error ? '(Error)' : '(Success)'}
+                    </button>
+                    {expandToolResult && (
+                      <pre className={`p-2 rounded border text-[11px] overflow-x-auto max-h-36 ${
+                        parsedResponse.is_error ? 'bg-rose-950/20 border-rose-900 text-rose-300' : 'bg-black/80 border-[#202024] text-zinc-300'
+                      }`}>
+                        {JSON.stringify(parsedResponse.result !== undefined ? parsedResponse.result : parsedResponse, null, 2)}
+                      </pre>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Request Payload Section */}
-            <div className="space-y-1.5">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
-                Request Payload (Messages & Tools)
-              </span>
-              <pre className="p-3 rounded-lg bg-[#080c14] border border-gray-800 text-[11px] text-gray-300 overflow-x-auto max-h-56 leading-relaxed">
-                {parsedRequest ? JSON.stringify(parsedRequest, null, 2) : span.request_payload || 'No request payload'}
-              </pre>
+            <div className="space-y-1">
+              <button
+                onClick={() => setExpandRequest((p) => !p)}
+                className="w-full flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-zinc-400 hover:text-zinc-200 py-1"
+              >
+                <span className="flex items-center gap-1">
+                  {expandRequest ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                  Request Payload
+                </span>
+                <span className="text-[10px] text-zinc-500 lowercase">{expandRequest ? 'collapse' : 'expand'}</span>
+              </button>
+              {expandRequest && (
+                <pre className="p-2.5 rounded bg-[#09090b] border border-[#202024] text-[11px] text-zinc-300 overflow-x-auto max-h-48 leading-relaxed">
+                  {parsedRequest ? JSON.stringify(parsedRequest, null, 2) : span.request_payload || 'No request payload'}
+                </pre>
+              )}
             </div>
 
             {/* Response Payload Section */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
-                  Response Payload (Completion / Error)
-                </span>
+            <div className="space-y-1">
+              <div className="flex items-center justify-between py-1">
+                <button
+                  onClick={() => setExpandResponse((p) => !p)}
+                  className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-zinc-400 hover:text-zinc-200"
+                >
+                  {expandResponse ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                  Response Output
+                </button>
                 <button
                   onClick={handleCopyResponse}
-                  className="text-[10px] text-gray-400 hover:text-white flex items-center gap-1"
+                  className="text-[10px] text-zinc-400 hover:text-white flex items-center gap-1"
+                  title="Copy response JSON"
                 >
-                  {copiedResponse ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                  {copiedResponse ? <Check className="w-3 h-3 text-white" /> : <Copy className="w-3 h-3" />}
                   {copiedResponse ? 'Copied' : 'Copy'}
                 </button>
               </div>
-              <pre
-                className={`p-3 rounded-lg border text-[11px] overflow-x-auto max-h-64 leading-relaxed ${
-                  span.span_type === 'guardrail_block'
-                    ? 'bg-red-950/20 border-red-800 text-red-200'
-                    : 'bg-[#080c14] border-gray-800 text-gray-300'
-                }`}
-              >
-                {parsedResponse ? JSON.stringify(parsedResponse, null, 2) : span.response_payload || 'No response payload'}
-              </pre>
-            </div>
-          </>
-        ) : (
-          /* Time-Travel Fork & Replay IDE */
-          <div className="space-y-4">
-            <div className="p-3 rounded-lg bg-purple-950/20 border border-purple-800/60 text-xs text-purple-200 leading-relaxed font-sans">
-              <span className="font-semibold text-purple-300 block mb-1 flex items-center gap-1 font-mono">
-                <GitFork className="w-3.5 h-3.5 text-purple-400" />
-                Time-Travel DAG Forking
-              </span>
-              Edit the prompt messages or model below. Forking creates an isolated execution branch from this exact point, replaying all preceding DAG nodes at <strong>$0.00</strong> cost.
+              {expandResponse && (
+                <pre
+                  className={`p-2.5 rounded border text-[11px] overflow-x-auto max-h-56 leading-relaxed ${
+                    span.span_type === 'guardrail_block'
+                      ? 'bg-rose-950/20 border-rose-800 text-rose-200'
+                      : 'bg-[#09090b] border-[#202024] text-zinc-300'
+                  }`}
+                >
+                  {parsedResponse ? JSON.stringify(parsedResponse, null, 2) : span.response_payload || 'No response payload'}
+                </pre>
+              )}
             </div>
 
-            {/* Model & Agent selectors */}
-            <div className="grid grid-cols-2 gap-2 font-mono">
+            {/* Breakpoint Config Action */}
+            {onToggleAgentBreakpoint && (
+              <div className="pt-1">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => onToggleAgentBreakpoint(span.agent_name)}
+                  icon={<Sliders className="w-3 h-3" />}
+                >
+                  {isAgentBreakpointed ? `Remove Breakpoint on ${span.agent_name}` : `Set Breakpoint on ${span.agent_name}`}
+                </Button>
+              </div>
+            )}
+          </>
+        )}
+
+        {activeTab === 'fork' && (
+          <div className="space-y-3 font-mono">
+            <div className="p-2.5 rounded bg-[#111114] border border-[#2c2c32] text-xs text-zinc-300 leading-relaxed font-sans">
+              <span className="font-semibold text-white block mb-0.5 flex items-center gap-1 font-mono">
+                <GitFork className="w-3.5 h-3.5 text-zinc-300" />
+                Time-Travel Fork
+              </span>
+              Branch execution from this point. Preceding DAG nodes are replayed from cache with <strong>$0.00</strong> spend.
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="text-[10px] text-gray-400 uppercase block mb-1">Target Model</label>
-                <select
+                <label className="text-[10px] text-zinc-400 uppercase block mb-1">Target Model</label>
+                <Select
                   value={forkModel}
                   onChange={(e) => setForkModel(e.target.value)}
-                  className="w-full bg-[#111827] border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-purple-500"
                 >
                   <option value="gpt-4o">gpt-4o</option>
                   <option value="gpt-4o-mini">gpt-4o-mini</option>
                   <option value="claude-3-5-sonnet-20241022">claude-3-5-sonnet</option>
                   <option value="claude-3-5-haiku-20241022">claude-3-5-haiku</option>
-                  <option value="llama3.1:70b">llama3.1:70b (Local $0.00)</option>
-                  <option value="deepseek-r1">deepseek-r1 (Local $0.00)</option>
-                </select>
+                </Select>
               </div>
 
               <div>
-                <label className="text-[10px] text-gray-400 uppercase block mb-1">Agent Name</label>
-                <input
-                  type="text"
+                <label className="text-[10px] text-zinc-400 uppercase block mb-1">Agent Name</label>
+                <Input
                   value={forkAgentName}
                   onChange={(e) => setForkAgentName(e.target.value)}
-                  className="w-full bg-[#111827] border border-gray-700 rounded-lg px-2.5 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-purple-500 font-mono"
                 />
               </div>
             </div>
 
-            {/* Editable Messages Textarea */}
-            <div className="space-y-1.5">
-              <label className="text-[10px] text-gray-400 uppercase font-bold flex items-center justify-between">
+            <div className="space-y-1">
+              <label className="text-[10px] text-zinc-400 uppercase font-semibold flex items-center justify-between">
                 <span>Prompt / Messages JSON</span>
-                <span className="text-gray-500 font-normal">Array of &#123; role, content &#125;</span>
+                <span className="text-zinc-500 font-normal">Array of &#123; role, content &#125;</span>
               </label>
               <textarea
                 rows={9}
                 value={forkMessagesJson}
                 onChange={(e) => setForkMessagesJson(e.target.value)}
-                className="w-full bg-[#080c14] border border-gray-800 rounded-lg p-3 text-[11px] text-gray-200 font-mono focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500 leading-relaxed resize-none"
+                className="w-full bg-[#09090b] border border-[#202024] rounded p-2 text-[11px] text-zinc-200 font-mono focus:outline-none focus:border-zinc-500 leading-relaxed resize-none"
               />
               {forkJsonError && (
-                <p className="text-[11px] text-red-400 bg-red-950/40 border border-red-900 p-2 rounded">
+                <p className="text-[11px] text-rose-300 bg-rose-950/40 border border-rose-900 p-2 rounded">
                   {forkJsonError}
                 </p>
               )}
             </div>
 
-            {/* Action Button */}
-            <button
-              onClick={handleExecuteFork}
+            <Button
+              variant="primary"
+              size="md"
+              className="w-full"
               disabled={isForking}
-              className={`w-full py-2.5 rounded-lg font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-lg ${
-                isForking
-                  ? 'bg-purple-950 text-purple-400 border border-purple-800 cursor-not-allowed opacity-80'
-                  : 'bg-purple-600 hover:bg-purple-500 text-white shadow-[0_0_20px_rgba(168,85,247,0.35)] active:scale-[0.98]'
-              }`}
+              isLoading={isForking}
+              onClick={handleExecuteFork}
+              icon={<GitFork className="w-3.5 h-3.5" />}
             >
-              {isForking ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin text-purple-300" />
-                  <span>Branching & Executing DAG...</span>
-                </>
-              ) : (
-                <>
-                  <GitFork className="w-4 h-4" />
-                  <span>Fork & Execute from Here</span>
-                </>
-              )}
-            </button>
+              Fork & Execute From Here
+            </Button>
+          </div>
+        )}
+
+        {activeTab === 'json' && (
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-zinc-400 uppercase font-semibold">Raw Span Object</span>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(JSON.stringify(span, null, 2));
+                  setCopiedResponse(true);
+                  setTimeout(() => setCopiedResponse(false), 2000);
+                }}
+                className="text-[10px] text-zinc-400 hover:text-white flex items-center gap-1"
+              >
+                {copiedResponse ? <Check className="w-3 h-3 text-white" /> : <Copy className="w-3 h-3" />}
+                Copy JSON
+              </button>
+            </div>
+            <pre className="p-2.5 rounded bg-[#09090b] border border-[#202024] text-[11px] text-zinc-300 overflow-x-auto max-h-[500px] leading-relaxed">
+              {JSON.stringify(span, null, 2)}
+            </pre>
           </div>
         )}
       </div>

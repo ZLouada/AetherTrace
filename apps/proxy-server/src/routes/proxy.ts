@@ -8,6 +8,15 @@ import {
   trace_spans,
   computeRequestHash,
   ChatCompletionRequestSchema,
+  captureFullProvenance,
+  redactValue,
+  truncateWithMetadata,
+  validateTargetUrl,
+  validateRedirect,
+  recordSecurityAudit,
+  indexSpan,
+  indexRun,
+  DEFAULT_LIMITS,
   type TraceRun,
   type TraceSpan
 } from '@aethertrace/core-schema';
@@ -19,6 +28,14 @@ import { evaluateChaos, broadcastChaosInjected } from '../services/chaos.js';
 import { broadcastEvent } from '../broadcaster.js';
 
 export const proxyRouter = new Hono();
+
+function sanitizePayloadForStorage(payload: string | null | undefined): string | null {
+  if (!payload) return null;
+  const redacted = redactValue(payload);
+  const str = typeof redacted === 'string' ? redacted : JSON.stringify(redacted);
+  const trunc = truncateWithMetadata(str, DEFAULT_LIMITS.MAX_PAYLOAD_STRING_BYTES);
+  return trunc.text;
+}
 
 function estimateTokens(text: string): number {
   if (!text) return 0;
@@ -63,58 +80,60 @@ function generateMockResponse(body: any, id: string) {
 
 function commitSpanAndRun(
   db: any,
+  sqlite: any,
   span: TraceSpan,
   isUpdate: boolean,
   totalTokens: number,
   costUsd: number
 ) {
-  if (isUpdate) {
-    db.update(trace_spans)
-      .set({
-        span_type: span.span_type,
-        model: span.model,
-        request_payload: span.request_payload,
-        response_payload: span.response_payload,
-        prompt_tokens: span.prompt_tokens,
-        completion_tokens: span.completion_tokens,
-        cost_usd: span.cost_usd,
-        latency_ms: span.latency_ms,
-        cache_hit: span.cache_hit,
-        request_hash: span.request_hash
-      })
-      .where(eq(trace_spans.id, span.id))
-      .run();
+  // Sanitize and redact credentials and bound payload sizes
+  span.request_payload = sanitizePayloadForStorage(span.request_payload);
+  span.response_payload = sanitizePayloadForStorage(span.response_payload);
 
-    broadcastEvent({
-      type: 'SPAN_UPDATED',
-      data: span,
-      runId: span.run_id,
-      spanId: span.id
-    });
-  } else {
-    db.insert(trace_spans).values(span).run();
-
-    broadcastEvent({
-      type: 'SPAN_CREATED',
-      data: span,
-      runId: span.run_id,
-      spanId: span.id
-    });
-  }
-
-  if (totalTokens > 0 || costUsd > 0) {
-    const runs = db.select().from(trace_runs).where(eq(trace_runs.id, span.run_id)).limit(1).all();
-    if (runs.length > 0) {
-      const run = runs[0];
-      db.update(trace_runs)
+  const tx = sqlite.transaction(() => {
+    if (isUpdate) {
+      db.update(trace_spans)
         .set({
-          total_tokens: run.total_tokens + totalTokens,
-          total_cost_usd: run.total_cost_usd + costUsd
+          span_type: span.span_type,
+          model: span.model,
+          request_payload: span.request_payload,
+          response_payload: span.response_payload,
+          prompt_tokens: span.prompt_tokens,
+          completion_tokens: span.completion_tokens,
+          cost_usd: span.cost_usd,
+          latency_ms: span.latency_ms,
+          cache_hit: span.cache_hit,
+          usage_status: span.usage_status || 'reported',
+          request_hash: span.request_hash
         })
-        .where(eq(trace_runs.id, span.run_id))
+        .where(eq(trace_spans.id, span.id))
         .run();
+    } else {
+      db.insert(trace_spans).values(span).run();
     }
-  }
+
+    if (totalTokens > 0 || costUsd > 0) {
+      sqlite.prepare(`
+        UPDATE trace_runs
+        SET total_tokens = total_tokens + ?,
+            total_cost_usd = total_cost_usd + ?
+        WHERE id = ?
+      `).run(totalTokens, costUsd, span.run_id);
+    }
+  });
+
+  tx();
+
+  try {
+    indexSpan(sqlite, span);
+  } catch {}
+
+  broadcastEvent({
+    type: isUpdate ? 'SPAN_UPDATED' : 'SPAN_CREATED',
+    data: span,
+    runId: span.run_id,
+    spanId: span.id
+  });
 }
 
 async function handleChatCompletions(c: any) {
@@ -153,11 +172,42 @@ async function handleChatCompletions(c: any) {
   const hasBreakpointHeader = c.req.header('x-breakpoint') === 'true' || c.req.header('x-breakpoint') === '1';
   const chaosHeader = c.req.header('x-chaos-inject');
 
-  const { db } = getDatabase();
+  // Phase 7: SSRF Early Target Check
+  const explicitTarget = c.req.header('x-target-url') || c.req.header('x-target-base-url');
+  if (explicitTarget) {
+    const targetCheckUrl = explicitTarget.endsWith('/chat/completions')
+      ? explicitTarget
+      : `${explicitTarget.replace(/\/$/, '')}/chat/completions`;
+    const check = validateTargetUrl(targetCheckUrl, {
+      allowPrivateNetwork: process.env.AETHERTRACE_ALLOW_PRIVATE_NETWORK === 'true'
+    });
+    if (!check.safe) {
+      recordSecurityAudit({
+        operation: 'ssrf_blocked',
+        runId,
+        result: 'blocked',
+        reason: check.reason,
+        details: { targetUrl: targetCheckUrl }
+      });
+      return c.json({
+        error: {
+          message: `SSRF Blocked: ${check.reason}`,
+          type: 'ssrf_blocked'
+        }
+      }, 403);
+    }
+  }
+
+  const { db, sqlite } = getDatabase();
 
   // 1. Ensure Trace Run exists in SQLite
   const existingRuns = db.select().from(trace_runs).where(eq(trace_runs.id, runId)).limit(1).all();
   if (existingRuns.length === 0) {
+    let runProvenance: string | null = null;
+    try {
+      runProvenance = JSON.stringify(captureFullProvenance());
+    } catch {}
+
     const newRun: TraceRun = {
       id: runId,
       name: c.req.header('x-run-name') || `${agentName}-session`,
@@ -166,9 +216,13 @@ async function handleChatCompletions(c: any) {
       total_cost_usd: 0.0,
       parent_run_id: null,
       forked_at_span_id: null,
+      provenance: runProvenance,
       created_at: startTime
     };
     db.insert(trace_runs).values(newRun).run();
+    try {
+      indexRun(sqlite, newRun);
+    } catch {}
 
     broadcastEvent({
       type: 'RUN_CREATED',
@@ -201,6 +255,7 @@ async function handleChatCompletions(c: any) {
       cost_usd: 0.0,
       latency_ms: Math.max(1, now - startTime),
       cache_hit: 0,
+      usage_status: 'unavailable',
       request_hash: requestHash,
       created_at: now
     };
@@ -220,7 +275,10 @@ async function handleChatCompletions(c: any) {
         type: 'chaos_rate_limit',
         details: chaosEval.details
       }
-    }, 429);
+    }, 429, {
+      'X-Span-Id': chaosSpanId,
+      'X-Run-Id': runId
+    });
   }
 
   if (chaosEval.fault === 'upstream_500') {
@@ -244,6 +302,7 @@ async function handleChatCompletions(c: any) {
       cost_usd: 0.0,
       latency_ms: Math.max(1, now - startTime),
       cache_hit: 0,
+      usage_status: 'unavailable',
       request_hash: requestHash,
       created_at: now
     };
@@ -263,7 +322,10 @@ async function handleChatCompletions(c: any) {
         type: 'chaos_upstream_failure',
         details: chaosEval.details
       }
-    }, 502);
+    }, 502, {
+      'X-Span-Id': chaosSpanId,
+      'X-Run-Id': runId
+    });
   }
 
   if (chaosEval.fault === 'latency' && chaosEval.latencyMs) {
@@ -308,8 +370,14 @@ async function handleChatCompletions(c: any) {
   let spanId = `span_${randomUUID()}`;
   let isResumedFromBreakpoint = false;
 
-  if (shouldIntercept(agentName, reqBody.model, hasBreakpointHeader)) {
+  if (shouldIntercept(agentName, reqBody.model, hasBreakpointHeader, {
+    spanType: 'llm_call',
+    agentName,
+    model: reqBody.model,
+    requestPayload: rawBody
+  })) {
     const heldSpan: TraceSpan = {
+
       id: spanId,
       run_id: runId,
       parent_span_id: parentSpanId,
@@ -323,6 +391,7 @@ async function handleChatCompletions(c: any) {
       cost_usd: 0.0,
       latency_ms: 0,
       cache_hit: 0,
+      usage_status: 'unavailable',
       request_hash: requestHash,
       created_at: Date.now()
     };
@@ -426,6 +495,8 @@ async function handleChatCompletions(c: any) {
       });
 
       return c.json(mockCompletion, 200, {
+        'X-Span-Id': spanId,
+        'X-Run-Id': runId,
         'X-AetherTrace-Breakpoint': 'MOCKED',
         'X-AetherTrace-Cost': '$0.000000',
         'X-AetherTrace-Latency': `${Math.max(1, now - startTime)}ms`
@@ -490,11 +561,12 @@ async function handleChatCompletions(c: any) {
           cost_usd: 0.0,
           latency_ms: 0,
           cache_hit: 1,
+          usage_status: 'reported',
           request_hash: requestHash,
           created_at: now
         };
 
-        commitSpanAndRun(db, replaySpan, isResumedFromBreakpoint, 0, 0);
+        commitSpanAndRun(db, sqlite, replaySpan, isResumedFromBreakpoint, 0, 0);
 
         if (isStreaming) {
           c.header('Content-Type', 'text/event-stream');
@@ -511,6 +583,8 @@ async function handleChatCompletions(c: any) {
         }
 
         return c.json(cachedResponse, 200, {
+          'X-Span-Id': replaySpanId,
+          'X-Run-Id': runId,
           'X-AetherTrace-Cache': 'HIT',
           'X-AetherTrace-Latency': '0ms',
           'X-AetherTrace-Cost': '$0.000000'
@@ -540,11 +614,12 @@ async function handleChatCompletions(c: any) {
       cost_usd: 0.0,
       latency_ms: Math.max(1, now - startTime),
       cache_hit: 0,
+      usage_status: 'estimated',
       request_hash: requestHash,
       created_at: now
     };
 
-    commitSpanAndRun(db, span, isResumedFromBreakpoint, 30, 0.0);
+    commitSpanAndRun(db, sqlite, span, isResumedFromBreakpoint, 30, 0.0);
     broadcastChaosInjected(spanId, runId, 'corrupt_json', 'Chaos Engine injected malformed JSON syntax');
 
     return c.text(corruptSnippet, 200, {
@@ -574,6 +649,8 @@ async function handleChatCompletions(c: any) {
       c.header('Cache-Control', 'no-cache');
       c.header('Connection', 'keep-alive');
       c.header('X-AetherTrace-Cache', 'MISS');
+      c.header('X-Span-Id', spanId);
+      c.header('X-Run-Id', runId);
 
       return streamText(c, async (stream) => {
         for (const chunk of createReplayStreamChunks(mockResponse, reqBody.model)) {
@@ -595,11 +672,12 @@ async function handleChatCompletions(c: any) {
           cost_usd: costResult.totalCost,
           latency_ms: Math.max(150, now - startTime),
           cache_hit: 0,
+          usage_status: 'reported',
           request_hash: requestHash,
           created_at: now
         };
 
-        commitSpanAndRun(db, span, isResumedFromBreakpoint, totalTokens, costResult.totalCost);
+        commitSpanAndRun(db, sqlite, span, isResumedFromBreakpoint, totalTokens, costResult.totalCost);
       });
     }
 
@@ -619,21 +697,47 @@ async function handleChatCompletions(c: any) {
       cost_usd: costResult.totalCost,
       latency_ms: latencyMs,
       cache_hit: 0,
+      usage_status: 'reported',
       request_hash: requestHash,
       created_at: now
     };
 
-    commitSpanAndRun(db, span, isResumedFromBreakpoint, totalTokens, costResult.totalCost);
+    commitSpanAndRun(db, sqlite, span, isResumedFromBreakpoint, totalTokens, costResult.totalCost);
 
     return c.json(mockResponse, 200, {
+      'X-Span-Id': spanId,
+      'X-Run-Id': runId,
       'X-AetherTrace-Cache': 'MISS',
       'X-AetherTrace-Cost': `$${costResult.totalCost.toFixed(6)}`,
       'X-AetherTrace-Latency': `${latencyMs}ms`
     });
   }
 
-  // 7. Forward to real upstream OPENAI_BASE_URL
+  // 7. Forward to real upstream OPENAI_BASE_URL (SSRF-protected)
   const targetUrl = `${openaiBaseUrl.replace(/\/$/, '')}/chat/completions`;
+
+  const ssrfCheck = validateTargetUrl(targetUrl, {
+    allowPrivateNetwork: process.env.AETHERTRACE_ALLOW_PRIVATE_NETWORK === 'true'
+  });
+
+  if (!ssrfCheck.safe) {
+    recordSecurityAudit({
+      operation: 'ssrf_blocked',
+      runId,
+      spanId,
+      result: 'blocked',
+      reason: ssrfCheck.reason,
+      details: { targetUrl }
+    });
+
+    return c.json({
+      error: {
+        message: `SSRF Blocked: ${ssrfCheck.reason}`,
+        type: 'ssrf_blocked'
+      }
+    }, 403);
+  }
+
   const forwardHeaders: Record<string, string> = {
     'Content-Type': 'application/json'
   };
@@ -644,11 +748,49 @@ async function handleChatCompletions(c: any) {
   }
 
   try {
-    const upstreamRes = await fetch(targetUrl, {
+    const forwardBody = { ...rawBody };
+    if (isStreaming && !forwardBody.stream_options) {
+      forwardBody.stream_options = { include_usage: true };
+    }
+
+    let upstreamRes = await fetch(targetUrl, {
       method: 'POST',
       headers: forwardHeaders,
-      body: JSON.stringify(rawBody)
+      body: JSON.stringify(forwardBody),
+      redirect: 'manual'
     });
+
+    // Handle redirect security verification
+    if (upstreamRes.status >= 300 && upstreamRes.status < 400 && upstreamRes.headers.get('location')) {
+      const redirectLoc = upstreamRes.headers.get('location')!;
+      const redirectCheck = validateRedirect(targetUrl, redirectLoc, {
+        allowPrivateNetwork: process.env.AETHERTRACE_ALLOW_PRIVATE_NETWORK === 'true'
+      });
+
+      if (!redirectCheck.safe) {
+        recordSecurityAudit({
+          operation: 'ssrf_blocked',
+          runId,
+          spanId,
+          result: 'blocked',
+          reason: `Redirect SSRF blocked: ${redirectCheck.reason}`,
+          details: { redirectLoc }
+        });
+
+        return c.json({
+          error: {
+            message: `SSRF Redirect Blocked: ${redirectCheck.reason}`,
+            type: 'ssrf_blocked'
+          }
+        }, 403);
+      }
+
+      upstreamRes = await fetch(redirectCheck.normalizedUrl || redirectLoc, {
+        method: 'POST',
+        headers: forwardHeaders,
+        body: JSON.stringify(forwardBody)
+      });
+    }
 
     if (!upstreamRes.ok) {
       const errorText = await upstreamRes.text();
@@ -667,11 +809,12 @@ async function handleChatCompletions(c: any) {
         cost_usd: 0.0,
         latency_ms: Math.max(1, now - startTime),
         cache_hit: 0,
+        usage_status: 'unavailable',
         request_hash: requestHash,
         created_at: now
       };
 
-      commitSpanAndRun(db, errSpan, isResumedFromBreakpoint, 0, 0);
+      commitSpanAndRun(db, sqlite, errSpan, isResumedFromBreakpoint, 0, 0);
       return c.text(errorText, upstreamRes.status as any);
     }
 
@@ -685,6 +828,7 @@ async function handleChatCompletions(c: any) {
         let accumulatedText = '';
         let promptTokens = estimateTokens(JSON.stringify(rawBody.messages || []));
         let completionTokens = 0;
+        let hasReportedUsage = false;
 
         const reader = upstreamRes.body?.getReader();
         if (!reader) return;
@@ -709,6 +853,7 @@ async function handleChatCompletions(c: any) {
                   if (parsed.usage) {
                     promptTokens = parsed.usage.prompt_tokens || promptTokens;
                     completionTokens = parsed.usage.completion_tokens || completionTokens;
+                    hasReportedUsage = true;
                   }
                 } catch {}
               }
@@ -725,6 +870,7 @@ async function handleChatCompletions(c: any) {
         const costResult = calculateCost(reqBody.model, promptTokens, completionTokens);
         const totalTokens = promptTokens + completionTokens;
         const now = Date.now();
+        const usageStatus = hasReportedUsage ? 'reported' : 'estimated';
 
         const synthesizedResponse = {
           id: `chatcmpl-${spanId}`,
@@ -742,7 +888,8 @@ async function handleChatCompletions(c: any) {
             prompt_tokens: promptTokens,
             completion_tokens: completionTokens,
             total_tokens: totalTokens
-          }
+          },
+          usage_status: usageStatus
         };
 
         const span: TraceSpan = {
@@ -759,11 +906,12 @@ async function handleChatCompletions(c: any) {
           cost_usd: costResult.totalCost,
           latency_ms: Math.max(1, now - startTime),
           cache_hit: 0,
+          usage_status: usageStatus,
           request_hash: requestHash,
           created_at: now
         };
 
-        commitSpanAndRun(db, span, isResumedFromBreakpoint, totalTokens, costResult.totalCost);
+        commitSpanAndRun(db, sqlite, span, isResumedFromBreakpoint, totalTokens, costResult.totalCost);
       });
     }
 
@@ -772,10 +920,12 @@ async function handleChatCompletions(c: any) {
     const now = Date.now();
     const latencyMs = Math.max(1, now - startTime);
 
+    const hasReportedUsage = Boolean(upstreamJson.usage?.prompt_tokens !== undefined || upstreamJson.usage?.completion_tokens !== undefined);
     const promptTokens = upstreamJson.usage?.prompt_tokens ?? estimateTokens(JSON.stringify(rawBody.messages || []));
     const completionTokens = upstreamJson.usage?.completion_tokens ?? estimateTokens(upstreamJson.choices?.[0]?.message?.content || '');
     const totalTokens = promptTokens + completionTokens;
     const costResult = calculateCost(reqBody.model, promptTokens, completionTokens);
+    const usageStatus = hasReportedUsage ? 'reported' : 'estimated';
 
     const span: TraceSpan = {
       id: spanId,
@@ -791,16 +941,20 @@ async function handleChatCompletions(c: any) {
       cost_usd: costResult.totalCost,
       latency_ms: latencyMs,
       cache_hit: 0,
+      usage_status: usageStatus,
       request_hash: requestHash,
       created_at: now
     };
 
-    commitSpanAndRun(db, span, isResumedFromBreakpoint, totalTokens, costResult.totalCost);
+    commitSpanAndRun(db, sqlite, span, isResumedFromBreakpoint, totalTokens, costResult.totalCost);
 
     return c.json(upstreamJson, 200, {
+      'X-Span-Id': spanId,
+      'X-Run-Id': runId,
       'X-AetherTrace-Cache': 'MISS',
       'X-AetherTrace-Cost': `$${costResult.totalCost.toFixed(6)}`,
-      'X-AetherTrace-Latency': `${latencyMs}ms`
+      'X-AetherTrace-Latency': `${latencyMs}ms`,
+      'X-AetherTrace-Usage-Status': usageStatus
     });
   } catch (err: any) {
     const now = Date.now();
@@ -818,11 +972,12 @@ async function handleChatCompletions(c: any) {
       cost_usd: 0.0,
       latency_ms: Math.max(1, now - startTime),
       cache_hit: 0,
+      usage_status: 'unavailable',
       request_hash: requestHash,
       created_at: now
     };
 
-    commitSpanAndRun(db, errSpan, isResumedFromBreakpoint, 0, 0);
+    commitSpanAndRun(db, sqlite, errSpan, isResumedFromBreakpoint, 0, 0);
 
     return c.json({
       error: {

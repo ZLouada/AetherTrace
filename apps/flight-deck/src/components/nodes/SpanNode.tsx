@@ -1,20 +1,29 @@
+'use client';
+
 import React, { memo } from 'react';
 import { Handle, Position } from '@xyflow/react';
-import { Bot, Cpu, Zap, AlertOctagon, Clock, DollarSign, ArrowRight } from 'lucide-react';
+import {
+  Bot,
+  Cpu,
+  Zap,
+  AlertOctagon,
+  Clock,
+  DollarSign,
+  ArrowRight,
+  Wrench,
+  Globe,
+  RotateCcw,
+  AlertTriangle,
+  User,
+  Workflow
+} from 'lucide-react';
 import type { TraceSpan } from '@/lib/api';
+import { Badge, getCategoryStyle } from '@/design-system';
 
 export interface SpanNodeData {
   span: TraceSpan;
   isSelected?: boolean;
 }
-
-const AGENT_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  Planner: { bg: 'bg-purple-950/40', text: 'text-purple-300', border: 'border-purple-800' },
-  Researcher: { bg: 'bg-blue-950/40', text: 'text-blue-300', border: 'border-blue-800' },
-  Coder: { bg: 'bg-emerald-950/40', text: 'text-emerald-300', border: 'border-emerald-800' },
-  Reviewer: { bg: 'bg-amber-950/40', text: 'text-amber-300', border: 'border-amber-800' },
-  'Rogue Loop Agent': { bg: 'bg-rose-950/50', text: 'text-rose-300', border: 'border-rose-700' }
-};
 
 export const SpanNode = memo(({ data }: { data: SpanNodeData }) => {
   const { span, isSelected } = data;
@@ -33,16 +42,58 @@ export const SpanNode = memo(({ data }: { data: SpanNodeData }) => {
     span.response_payload?.includes('CHAOS')
   );
 
-  const agentTheme = AGENT_COLORS[span.agent_name] || {
-    bg: 'bg-gray-800/50',
-    text: 'text-gray-200',
-    border: 'border-gray-700'
-  };
+  // Semantic category and icons
+  let CategoryIcon = Bot;
+  let categoryKey: 'LLM' | 'TOOL' | 'HTTP' | 'RETRY' | 'ERROR' | 'USER' | 'AGENT' = 'LLM';
+  let typeLabel = span.model || 'model';
+
+  if (span.span_type === 'tool_call') {
+    CategoryIcon = Wrench;
+    categoryKey = 'TOOL';
+    typeLabel = 'TOOL';
+  } else if (span.span_type === 'http_call') {
+    CategoryIcon = Globe;
+    categoryKey = 'HTTP';
+    typeLabel = 'HTTP';
+  } else if (span.span_type === 'retry') {
+    CategoryIcon = RotateCcw;
+    categoryKey = 'RETRY';
+    typeLabel = 'RETRY';
+  } else if (span.span_type === 'guardrail_block') {
+    CategoryIcon = AlertTriangle;
+    categoryKey = 'ERROR';
+    typeLabel = 'ERROR';
+  } else if (span.span_type === 'user_input') {
+    CategoryIcon = User;
+    categoryKey = 'USER';
+    typeLabel = 'USER';
+  } else if (span.span_type === 'agent_state' || (span.span_type as string) === 'agent_dispatch') {
+    CategoryIcon = Workflow;
+    categoryKey = 'AGENT';
+    typeLabel = 'AGENT';
+  }
+
+  const categoryStyle = getCategoryStyle(categoryKey);
 
   // Extract a readable snippet from request or response
   let previewText = '';
   try {
-    if (span.response_payload) {
+    if (span.span_type === 'tool_call' && span.request_payload) {
+      const p = JSON.parse(span.request_payload);
+      if (p.tool_name) {
+        previewText = `Tool: ${p.tool_name}(${p.arguments ? (typeof p.arguments === 'string' ? p.arguments : JSON.stringify(p.arguments)) : ''})`;
+      }
+    } else if (span.span_type === 'http_call' && span.request_payload) {
+      const p = JSON.parse(span.request_payload);
+      if (p.method && p.url) {
+        previewText = `${p.method} ${p.url}`;
+      }
+    } else if (span.span_type === 'retry' && span.request_payload) {
+      const p = JSON.parse(span.request_payload);
+      previewText = `Retry attempt #${p.attempt || 1}: ${p.reason || 'retry'}`;
+    }
+
+    if (!previewText && span.response_payload) {
       const parsedRes = JSON.parse(span.response_payload);
       if (parsedRes.status === 'intercepted') {
         previewText = '⏸️ Intercepted by Breakpoint — awaiting human operator action';
@@ -50,122 +101,146 @@ export const SpanNode = memo(({ data }: { data: SpanNodeData }) => {
         previewText = parsedRes.choices[0].message.content;
       } else if (parsedRes.error?.message) {
         previewText = `Error: ${parsedRes.error.message}`;
+      } else if (parsedRes.result !== undefined) {
+        previewText = `Result: ${typeof parsedRes.result === 'string' ? parsedRes.result : JSON.stringify(parsedRes.result)}`;
       }
     }
     if (!previewText && span.request_payload) {
       const parsedReq = JSON.parse(span.request_payload);
       const lastMsg = parsedReq.messages?.[parsedReq.messages.length - 1];
-      previewText = lastMsg?.content || 'LLM Execution';
+      previewText = lastMsg?.content || `${span.span_type} invocation`;
     }
   } catch {
-    previewText = span.model || 'Invocation';
+    previewText = span.model || span.span_type || 'Invocation';
   }
 
   return (
     <div
-      className={`relative w-[320px] rounded-xl border transition-all duration-200 bg-[#111827] shadow-xl overflow-hidden ${
+      className={`relative w-[320px] rounded border transition-all duration-150 bg-[#111114] shadow-md overflow-hidden font-mono ${
         isIntercepted
-          ? 'border-amber-400 ring-2 ring-amber-500/60 shadow-[0_0_25px_rgba(245,158,11,0.5)] animate-pulse'
+          ? 'border-amber-400 ring-1 ring-amber-500/60 shadow-[0_0_12px_rgba(245,158,11,0.25)]'
           : isBreaker
-          ? 'border-red-500 shadow-[0_0_20px_rgba(239,68,68,0.35)] animate-pulse'
+          ? 'border-red-500 shadow-[0_0_12px_rgba(239,68,68,0.25)]'
           : isSelected
-          ? 'border-cyan-400 ring-2 ring-cyan-500/50 shadow-[0_0_25px_rgba(6,182,212,0.35)]'
-          : 'border-gray-800 hover:border-gray-700'
+          ? 'border-zinc-200 ring-1 ring-zinc-400/50 bg-[#17171b] shadow-lg'
+          : 'border-[#2c2c32] hover:border-[#3f3f48]'
       }`}
     >
       {/* React Flow Connection Handles */}
       <Handle
         type="target"
         position={Position.Top}
-        className="!w-2.5 !h-2.5 !bg-gray-400 !border-2 !border-[#111827] !rounded-full -top-1.5"
+        className="!w-2 !h-2 !bg-zinc-400 !border-2 !border-[#111114] !rounded-full -top-1"
       />
 
       {/* Header Bar */}
-      <div className="flex items-center justify-between px-3.5 py-2.5 border-b border-gray-800/80 bg-[#0d1322]/80">
-        <div className="flex items-center gap-2 min-w-0">
-          <span
-            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-xs font-semibold border ${agentTheme.bg} ${agentTheme.text} ${agentTheme.border}`}
+      <div className="flex items-center justify-between px-3 py-2 border-b border-[#202024] bg-[#18181c]">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <Badge
+            variant="category"
+            category={categoryKey}
+            size="xs"
+            icon={<CategoryIcon className="w-3 h-3 shrink-0" />}
           >
-            <Bot className="w-3.5 h-3.5 shrink-0" />
-            <span className="truncate max-w-[110px]">{span.agent_name}</span>
-          </span>
+            {span.agent_name}
+          </Badge>
         </div>
 
-        <div className="flex items-center gap-1.5">
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono text-gray-400 bg-gray-900 border border-gray-800">
-            <Cpu className="w-3 h-3 text-gray-500" />
-            <span className="truncate max-w-[100px]">{span.model || 'model'}</span>
+        <div className="flex items-center gap-1">
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] text-zinc-300 bg-[#111114] border border-[#2c2c32]">
+            <Cpu className="w-3 h-3 text-zinc-500" />
+            <span className="truncate max-w-[100px]">{typeLabel}</span>
           </span>
         </div>
       </div>
 
       {/* Body Preview & Token Usage */}
-      <div className="p-3.5 space-y-2.5">
-        <p className="text-xs text-gray-300 font-sans line-clamp-2 leading-relaxed">
+      <div className="p-3 space-y-2">
+        <p className="text-[11px] text-zinc-300 font-sans line-clamp-2 leading-relaxed">
           {previewText}
         </p>
 
         {/* Token Count Pill */}
-        <div className="flex items-center justify-between text-[11px] font-mono text-gray-400 pt-1 border-t border-gray-800/60">
+        <div className="flex items-center justify-between text-[10px] text-zinc-400 pt-1 border-t border-[#202024]">
           <span className="flex items-center gap-1">
-            <span className="text-gray-300 font-semibold">{span.prompt_tokens}</span>
-            <span className="text-gray-500">in</span>
-            <ArrowRight className="w-2.5 h-2.5 text-gray-600 inline" />
-            <span className="text-gray-300 font-semibold">{span.completion_tokens}</span>
-            <span className="text-gray-500">out</span>
+            <span className="text-zinc-200 font-semibold">{span.prompt_tokens}</span>
+            <span className="text-zinc-500">in</span>
+            <ArrowRight className="w-2.5 h-2.5 text-zinc-600 inline" />
+            <span className="text-zinc-200 font-semibold">{span.completion_tokens}</span>
+            <span className="text-zinc-500">out</span>
           </span>
-          <span className="text-gray-500 text-[10px]">
-            {span.prompt_tokens + span.completion_tokens} tokens
+          <span className="text-zinc-500 text-[10px]" title={span.usage_status === 'estimated' ? 'Estimated usage based on character heuristic' : 'Exact usage reported by provider'}>
+            {span.usage_status === 'estimated' ? `~${span.prompt_tokens + span.completion_tokens} tok (est)` : `${span.prompt_tokens + span.completion_tokens} tok`}
           </span>
         </div>
       </div>
 
-      {/* Footer Metrics & High-Visibility Status Badges */}
-      <div className="px-3.5 py-2 border-t border-gray-800/80 bg-[#0b0f1a] flex items-center justify-between text-xs">
-        <div className="flex items-center gap-3 text-gray-400 font-mono text-[11px]">
+      {/* Footer Metrics & Lineage Badges */}
+      <div className="px-3 py-1.5 border-t border-[#202024] bg-[#141418] flex items-center justify-between text-xs">
+        <div className="flex items-center gap-2.5 text-zinc-400 text-[10px]">
           <span className="flex items-center gap-1" title="Execution Latency">
-            <Clock className="w-3 h-3 text-gray-500" />
+            <Clock className="w-3 h-3 text-zinc-500" />
             {isCacheHit ? '0ms' : `${span.latency_ms}ms`}
           </span>
-          <span className="flex items-center gap-0.5 text-cyan-400 font-semibold" title="Total USD Cost">
-            <DollarSign className="w-3 h-3 text-cyan-500" />
+          <span className="flex items-center gap-0.5 text-white font-semibold" title="Total USD Cost">
+            <DollarSign className="w-3 h-3 text-zinc-400" />
             {span.cost_usd > 0 ? span.cost_usd.toFixed(5) : '0.00'}
           </span>
         </div>
 
         {/* Specialized High-Visibility Badges */}
-        {isIntercepted && (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold tracking-wide uppercase bg-amber-950/90 text-amber-300 border border-amber-500 shadow-[0_0_12px_rgba(245,158,11,0.5)] animate-pulse">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping inline-block" />
-            ⏸️ Awaiting Human
-          </span>
-        )}
+        <div className="flex items-center gap-1">
+          {isIntercepted && (
+            <Badge variant="origin" origin="modified" size="xs">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping inline-block mr-1" />
+              Held
+            </Badge>
+          )}
 
-        {isChaos && (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold tracking-wide uppercase bg-purple-950 text-purple-300 border border-purple-500 shadow-[0_0_12px_rgba(168,85,247,0.4)]">
-            🌪️ Chaos Fault
-          </span>
-        )}
+          {isChaos && (
+            <Badge variant="category" category="ERROR" size="xs">
+              Chaos
+            </Badge>
+          )}
 
-        {isCacheHit && !isIntercepted && (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold tracking-wide uppercase bg-emerald-950/80 text-emerald-400 border border-emerald-500/50 shadow-[0_0_10px_rgba(16,185,129,0.25)]">
-            <Zap className="w-3 h-3 text-emerald-400 fill-emerald-400" />
-            0ms Replay
-          </span>
-        )}
+          {span.execution_origin === 'modified' && !isIntercepted && (
+            <Badge variant="origin" origin="modified" size="xs">
+              Modified
+            </Badge>
+          )}
 
-        {isBreaker && !isIntercepted && !isChaos && (
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold tracking-wide uppercase bg-red-950 text-red-300 border border-red-500 shadow-[0_0_12px_rgba(239,68,68,0.4)]">
-            <AlertOctagon className="w-3 h-3 text-red-400 fill-red-400" />
-            Breaker Tripped
-          </span>
-        )}
+          {span.execution_origin === 'mocked' && !isIntercepted && (
+            <Badge variant="origin" origin="mocked" size="xs">
+              Mocked
+            </Badge>
+          )}
+
+          {span.execution_origin === 'new_execution' && !isIntercepted && (
+            <Badge variant="origin" origin="new_execution" size="xs">
+              New Exec
+            </Badge>
+          )}
+
+          {isCacheHit && !isIntercepted && span.execution_origin !== 'modified' && (
+            <Badge variant="origin" origin="cached_replay" size="xs">
+              <Zap className="w-2.5 h-2.5 text-sky-400 fill-sky-400 mr-0.5" />
+              0ms
+            </Badge>
+          )}
+
+          {isBreaker && !isIntercepted && !isChaos && (
+            <Badge variant="category" category="ERROR" size="xs">
+              <AlertOctagon className="w-2.5 h-2.5 text-rose-400 mr-0.5" />
+              Breaker
+            </Badge>
+          )}
+        </div>
       </div>
 
       <Handle
         type="source"
         position={Position.Bottom}
-        className="!w-2.5 !h-2.5 !bg-gray-400 !border-2 !border-[#111827] !rounded-full -bottom-1.5"
+        className="!w-2 !h-2 !bg-zinc-400 !border-2 !border-[#111114] !rounded-full -bottom-1"
       />
     </div>
   );

@@ -6,6 +6,7 @@ export interface TraceContext {
   runName: string;
   parentSpanId?: string | null;
   agentName?: string;
+  parentAgentName?: string;
   maxBudgetUsd?: number;
   replayMode?: boolean;
   mockUpstream?: boolean;
@@ -89,22 +90,39 @@ export async function traceRun<T>(
   return traceStorage.run(context, fn);
 }
 
+export interface TraceAgentOptions {
+  parentSpanId?: string | null;
+  role?: string;
+  task?: string;
+}
+
 /**
  * Sets the active agent name and parent span link within the current trace run.
  * Automatically nests DAG nodes based on calling structure.
  */
 export async function traceAgent<T>(
   agentName: string,
-  fn: (context: TraceContext) => Promise<T>
+  optionsOrFn: TraceAgentOptions | ((context: TraceContext) => Promise<T>),
+  maybeFn?: (context: TraceContext) => Promise<T>
 ): Promise<T> {
+  let options: TraceAgentOptions = {};
+  let fn: (context: TraceContext) => Promise<T>;
+
+  if (typeof optionsOrFn === 'function') {
+    fn = optionsOrFn;
+  } else {
+    options = optionsOrFn;
+    fn = maybeFn!;
+  }
+
   const current = getTraceContext();
   if (!current) {
-    // If called outside traceRun, generate an ad-hoc session
     const adHoc: TraceContext = {
       runId: `run_adhoc_${randomUUID()}`,
       runName: `${agentName}-ad-hoc`,
-      parentSpanId: null,
-      agentName
+      parentSpanId: options.parentSpanId || null,
+      agentName,
+      parentAgentName: undefined
     };
     return traceStorage.run(adHoc, () => fn(adHoc));
   }
@@ -112,10 +130,195 @@ export async function traceAgent<T>(
   const nextContext: TraceContext = {
     ...current,
     agentName,
-    parentSpanId: current.parentSpanId || null
+    parentAgentName: current.agentName,
+    parentSpanId: options.parentSpanId !== undefined ? options.parentSpanId : (current.parentSpanId || null)
   };
 
   return traceStorage.run(nextContext, () => fn(nextContext));
+}
+
+export interface TraceSpanOptions {
+  proxyBaseUrl?: string;
+  metadata?: Record<string, any>;
+}
+
+/**
+ * Directly emits an execution span to the AetherTrace interceptor proxy.
+ */
+export async function emitSpan(
+  spanData: {
+    runId?: string;
+    parentSpanId?: string | null;
+    spanType: string;
+    agentName?: string;
+    model?: string | null;
+    requestPayload?: any;
+    responsePayload?: any;
+    promptTokens?: number;
+    completionTokens?: number;
+    costUsd?: number;
+    latencyMs?: number;
+    usageStatus?: 'reported' | 'estimated' | 'unavailable';
+  },
+  proxyBaseUrl: string = 'http://localhost:4000'
+): Promise<{ spanId: string; runId: string } | null> {
+  const ctx = getTraceContext();
+  const runId = spanData.runId || ctx?.runId || `run_${randomUUID()}`;
+  const parentSpanId = spanData.parentSpanId !== undefined ? spanData.parentSpanId : (ctx?.parentSpanId || null);
+  const agentName = spanData.agentName || ctx?.agentName || 'default-agent';
+
+  try {
+    const res = await fetch(`${proxyBaseUrl.replace(/\/$/, '')}/api/spans`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        run_id: runId,
+        run_name: ctx?.runName,
+        parent_span_id: parentSpanId,
+        span_type: spanData.spanType,
+        agent_name: agentName,
+        model: spanData.model || null,
+        request_payload: spanData.requestPayload,
+        response_payload: spanData.responsePayload,
+        prompt_tokens: spanData.promptTokens || 0,
+        completion_tokens: spanData.completionTokens || 0,
+        cost_usd: spanData.costUsd || 0.0,
+        latency_ms: spanData.latencyMs || 0,
+        usage_status: spanData.usageStatus || (spanData.promptTokens || spanData.completionTokens ? 'reported' : 'unavailable')
+      })
+    });
+    if (res.ok) {
+      const data = await res.json() as any;
+      return { spanId: data.spanId, runId: data.runId };
+    }
+  } catch {}
+  return null;
+}
+
+/**
+ * Traces a tool execution. Emits a tool_call span, measures execution duration,
+ * records arguments/result, and sets parent_span_id for any nested calls inside fn().
+ */
+export async function traceTool<T>(
+  toolName: string,
+  args: any,
+  fn: () => Promise<T>,
+  options?: TraceSpanOptions
+): Promise<T> {
+  const startTime = Date.now();
+  const proxyUrl = options?.proxyBaseUrl || 'http://localhost:4000';
+
+  try {
+    const result = await fn();
+    const duration = Date.now() - startTime;
+    await emitSpan({
+      spanType: 'tool_call',
+      requestPayload: { tool_name: toolName, arguments: args, metadata: options?.metadata },
+      responsePayload: { status: 'success', result, duration_ms: duration },
+      latencyMs: duration
+    }, proxyUrl);
+
+    return result;
+  } catch (err: any) {
+    const duration = Date.now() - startTime;
+    await emitSpan({
+      spanType: 'tool_call',
+      requestPayload: { tool_name: toolName, arguments: args, metadata: options?.metadata },
+      responsePayload: {
+        status: 'error',
+        error: { message: err?.message || String(err), error_type: err?.name || 'ToolError' },
+        duration_ms: duration
+      },
+      latencyMs: duration
+    }, proxyUrl);
+    throw err;
+  }
+}
+
+/**
+ * Traces an external HTTP request, emitting an http_call span.
+ */
+export async function traceHttp<T>(
+  method: string,
+  url: string,
+  fn: () => Promise<T>,
+  options?: TraceSpanOptions
+): Promise<T> {
+  const startTime = Date.now();
+  const proxyUrl = options?.proxyBaseUrl || 'http://localhost:4000';
+
+  try {
+    const result = await fn();
+    const duration = Date.now() - startTime;
+    await emitSpan({
+      spanType: 'http_call',
+      requestPayload: { method: method.toUpperCase(), url, metadata: options?.metadata },
+      responsePayload: { status: 'completed', latency_ms: duration },
+      latencyMs: duration
+    }, proxyUrl);
+    return result;
+  } catch (err: any) {
+    const duration = Date.now() - startTime;
+    await emitSpan({
+      spanType: 'http_call',
+      requestPayload: { method: method.toUpperCase(), url, metadata: options?.metadata },
+      responsePayload: { status: 'error', error: err?.message || String(err), latency_ms: duration },
+      latencyMs: duration
+    }, proxyUrl);
+    throw err;
+  }
+}
+
+/**
+ * Traces a retry attempt, creating an explicit retry span linked to originalSpanId.
+ */
+export async function traceRetry<T>(
+  originalSpanId: string,
+  attempt: number,
+  reason: string,
+  fn: (retrySpanId?: string) => Promise<T>,
+  options?: TraceSpanOptions
+): Promise<T> {
+  const startTime = Date.now();
+  const proxyUrl = options?.proxyBaseUrl || 'http://localhost:4000';
+  const retrySpanId = `span_retry_${randomUUID()}`;
+
+  const current = getTraceContext();
+  const nextContext: TraceContext = {
+    ...(current || {
+      runId: `run_${randomUUID()}`,
+      runName: 'retry-run',
+      agentName: 'orchestrator'
+    }),
+    parentSpanId: retrySpanId
+  };
+
+  try {
+    const result = await traceStorage.run(nextContext, () => fn(retrySpanId));
+    const duration = Date.now() - startTime;
+
+    await emitSpan({
+      runId: nextContext.runId,
+      parentSpanId: originalSpanId,
+      spanType: 'retry',
+      requestPayload: { original_span_id: originalSpanId, attempt, reason },
+      responsePayload: { status: 'success', duration_ms: duration },
+      latencyMs: duration
+    }, proxyUrl);
+
+    return result;
+  } catch (err: any) {
+    const duration = Date.now() - startTime;
+    await emitSpan({
+      runId: nextContext.runId,
+      parentSpanId: originalSpanId,
+      spanType: 'retry',
+      requestPayload: { original_span_id: originalSpanId, attempt, reason },
+      responsePayload: { status: 'failed', error: err?.message || String(err), duration_ms: duration },
+      latencyMs: duration
+    }, proxyUrl);
+    throw err;
+  }
 }
 
 /**
@@ -193,6 +396,22 @@ export class AetherTraceClient {
 
   public traceAgent<T>(agentName: string, fn: (context: TraceContext) => Promise<T>): Promise<T> {
     return traceAgent(agentName, fn);
+  }
+
+  public traceTool<T>(toolName: string, args: any, fn: () => Promise<T>, options?: TraceSpanOptions): Promise<T> {
+    return traceTool(toolName, args, fn, { proxyBaseUrl: this.proxyBaseUrl, ...options });
+  }
+
+  public traceHttp<T>(method: string, url: string, fn: () => Promise<T>, options?: TraceSpanOptions): Promise<T> {
+    return traceHttp(method, url, fn, { proxyBaseUrl: this.proxyBaseUrl, ...options });
+  }
+
+  public traceRetry<T>(originalSpanId: string, attempt: number, reason: string, fn: (retrySpanId?: string) => Promise<T>, options?: TraceSpanOptions): Promise<T> {
+    return traceRetry(originalSpanId, attempt, reason, fn, { proxyBaseUrl: this.proxyBaseUrl, ...options });
+  }
+
+  public emitSpan(spanData: any): Promise<{ spanId: string; runId: string } | null> {
+    return emitSpan(spanData, this.proxyBaseUrl);
   }
 
   public fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
