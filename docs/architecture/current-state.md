@@ -1,4 +1,4 @@
-# AetherTrace Architecture: Current State Baseline (v0.3.0)
+# AetherTrace Architecture: Current State Baseline (v0.2.0)
 
 > **Document Type:** Architecture Baseline & Technical Audit  
 > **Status:** Active / Verified  
@@ -423,6 +423,24 @@ graph TD
 - **Deduplication & Idempotency Guards:** Header-based coordination protocol (`X-AetherTrace-Span-Id`, `X-AetherTrace-Instrumented`) preventing duplicate spans when both framework handlers and the proxy interceptor observe calls.
 - **Flight Deck & CLI UX:** Origin source badge in Inspector Drawer (`OpenTelemetry OTLP`, `LangChain Adapter`, `Python SDK`, `AetherTrace SDK`), topbar OTel origin badges, CLI commands `aethertrace otel import` and `export`, and full compatibility with Phase 11 Intelligence and Phase 13 Evaluation.
 
+### 3.21. Flight Deck & Developer Experience (`apps/flight-deck/`, `examples/phase15-developer-experience-test.ts`)
+- **Pinned Spans Workflow**: Developer bookmarking of critical spans with dedicated `📌 Pinned` filter pill, synchronizing DAG and timeline highlights.
+- **Multi-Selection & Real-Time Metric Aggregator**: Shift/Ctrl/Cmd+click multiple spans to immediately compute microdollar spend, latency sum, token counts, error rosters, and distinct agent/model lists.
+- **Hierarchical DAG Navigation**: Single-key parent navigation (`[`), child navigation (`]`), next/prev step (`J`/`K`), and inline child spans table in Inspector.
+- **Minimap & Viewport Bounds**: Responsive minimap with viewport tracking; auto-centering and fit view (`G`).
+- **Command Palette Expansion**: Enhanced palette actions for pin toggling, parent/child jumping, filter cycling, and modal triggers.
+- **Scalability**: Sub-millisecond aggregation (0.26ms for 100 spans, 7.75ms for 10k spans) with 100% local React state.
+
+---
+
+### 3.22. Release Hardening & v0.2.0 Finalization (`examples/phase16-hardening-release-test.ts`, `Dockerfile`, `scripts/`)
+- **Standardized Versioning**: Version `0.2.0` synchronized across all 7 workspace packages, Python SDK, CLI binary, and Proxy Server `/health`.
+- **v0.1.0 Trace Format Compatibility**: Validated seamless import and downstream processing of legacy v0.1 trace exports across Agent Intelligence and Evaluation engines.
+- **Database & Concurrency Hardening**: Verified SQLite WAL mode, busy timeout, idempotent DDL auto-migrations, and FTS5 `trace_search` index resilience.
+- **Security & Privacy Defense**: Automated credential redaction across OpenAI, Anthropic, AWS, JWT, and RSA formats; complete SSRF blocking for link-local and private IPs.
+- **Docker Deployment Architecture**: Multi-stage container build with signal forwarding (`SIGTERM`/`SIGINT`), persistent SQLite volume (`/data`), dual-port exposure (`3000`, `4000`), and automated health checking.
+- **Production Performance SLA**: 1,000 spans ingested and analyzed in 16.11ms (< 50ms SLA).
+
 ---
 
 ## 4. Architectural Verification Matrix
@@ -448,6 +466,9 @@ graph TD
 | **Phase 12 Replay & Experiment Studio** | `pnpm test:phase12` | **PASSED** | Experiment CRUD, 4 mutation types, prefix caching, bounded batch execution, 9.65ms scorecard matrix, persistent replay history |
 | **Phase 13 Evaluation & Optimization** | `pnpm test:phase13` | **PASSED** | Zero-eval assertion DSL, evidence attachment, culprit localization, error clustering, root cause, optimization signals, CLI CI gate, 2.99ms SLA |
 | **Phase 14 Ecosystem & Integrations** | `pnpm test:phase14` | **PASSED** | OTel OTLP v1 mapping, GenAI conventions, LangChain handler, wrapOpenAI/tool/agent decorators, deduplication, 10/10 tests green |
+| **Phase 15 Developer Experience** | `pnpm test:phase15` | **PASSED** | Pinned spans, multi-select metrics, parent/child navigation, minimap bounds, command palette, 6/6 tests green |
+| **Phase 16 Hardening & Release** | `pnpm test:phase16` | **PASSED** | v0.1 compatibility, WAL idempotency, secret scrubbing, SSRF shield, Docker container, 16.11ms SLA, 7/7 tests green |
+
 
 
 

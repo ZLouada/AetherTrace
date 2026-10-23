@@ -14,6 +14,7 @@
 **A local-first visual debugger, high-speed reverse proxy, and time-travel replay engine for multi-agent architectures.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+[![Release: v0.2.0](https://img.shields.io/badge/Release-v0.2.0-blue.svg)](./CHANGELOG.md)
 [![GitHub Repository](https://img.shields.io/badge/GitHub-ZLouada%2FAetherTrace-blue?logo=github)](https://github.com/ZLouada/AetherTrace)
 [![TypeScript: 5.x](https://img.shields.io/badge/TypeScript-5.x-3178C6.svg)](https://www.typescriptlang.org/)
 [![Turborepo](https://img.shields.io/badge/Monorepo-Turborepo-EF4444.svg)](https://turbo.build/)
@@ -46,20 +47,19 @@ Building multi-agent workflows (with LangChain, AutoGen, CrewAI, or raw OpenAI/A
 
 ---
 
-## ⚡ The Solution: AetherTrace
+## ⚡ The Solution: AetherTrace v0.2.0
 
-AetherTrace is an open-source, 100% local-first telemetry workstation:
+AetherTrace is an open-source, 100% local-first telemetry and optimization workstation:
 
 - 🖧 **Zero-Code-Change Proxy (`:4000`):** Change `baseURL` to `localhost:4000/v1`. Works instantly with OpenAI, Anthropic, or Ollama/local models.
 - 💾 **Local-First SQLite Engine (WAL mode):** Everything lives locally in `.trace.sqlite`. Zero external database drivers. Zero cloud telemetry.
-- 🛡️ **Hardware Circuit Breakers:** Sets hard budget caps and trips instantly on duplicate prompt loops before credit cards get charged.
-- ⏸️ **Live Mid-Flight Breakpoints (Burp Suite for AI):** Pause agent calls mid-flight, hold HTTP sockets open in memory, mutate prompts/tools in real time, or inject mock responses at \$0.00 cost.
-- 🌪️ **Chaos Engineering Engine:** Inject synthetic 429 rate limits, 502 upstream crashes, latency delays, and malformed JSON syntax to pressure-test agent self-healing loops.
-- ⚖️ **Side-by-Side DAG Diff Arena:** Compare any two runs side-by-side with executive cost savings scorecards, latency deltas, and split-screen prompt/response inspections.
-- 🎯 **Deterministic CI Regression Gate:** Replay golden `.trace.json` bundles in CI (`aethertrace assert`) to enforce budget ceilings, latency SLAs, and zero circuit-breaker trips.
-- 🖥️ **Interactive Flight Deck UI (`:3000`):** Automatic top-to-bottom DAG visualization powered by `@xyflow/react` and Dagre.
-- ⏳ **Time-Travel Fork & Replay:** Edit historical prompts or models at any node in the graph, branch off, and replay ancestor nodes in **0ms at $0.00** from local cache.
-- 📦 **Portable `.trace` Bundles:** Export any run into a self-contained `.trace.json` file (the AI equivalent of a `.pcap`). Teammates can import and inspect it with one click.
+- 🧠 **Agent Intelligence:** Deterministic extraction of agent/sub-agent hierarchies, sequential tool chains, parallel execution groups, retry chains, and $O(V+E)$ critical path bottleneck discovery.
+- 🧪 **Replay & Experiment Studio:** Fork runs into parameter variants (model, prompt, tools, mocks), replay with topological prefix caching ($0.00 spend on unmutated ancestors), and compare with 10ms analytical scorecards.
+- ⚖️ **Evaluation & Optimization Engine:** 100% deterministic local evaluations, zero-eval assertion DSL, error clustering, root cause analysis, and actionable optimization signals with zero external AI judges.
+- 🔌 **OpenTelemetry & Ecosystem Interop:** Native OTLP JSON (v1) bidirectional ingestion/export, LangChain/LangGraph adapters, function decorators, and deduplication guards.
+- 🖥️ **Flight Deck Workstation (`:3000`):** Interactive React Flow DAG, minimap, pinned spans (`P`), multi-select real-time cost/latency aggregator, single-key navigation (`[`/`]`), and ⌘K Command Palette.
+- 🛡️ **Hardware Circuit Breakers & Breakpoints:** Hard budget caps, live HTTP socket pauses mid-flight, prompt/response mutation, and chaos fault injection (429s, 502s, latency delays).
+- 📦 **Portable `.trace` Bundles:** Export runs into self-contained `.trace.json` bundles (the AI equivalent of a `.pcap`). Teammates can import and inspect offline.
 
 ---
 

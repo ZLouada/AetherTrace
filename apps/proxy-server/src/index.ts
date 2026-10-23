@@ -150,7 +150,7 @@ app.get('/api/system/status', (c) => {
   return c.json({
     status: 'ok',
     service: 'aethertrace-proxy-server',
-    version: '0.1.0',
+    version: '0.2.0',
     uptimeSeconds: Math.round(process.uptime()),
     uptime_seconds: Math.round(process.uptime()),
     process: {

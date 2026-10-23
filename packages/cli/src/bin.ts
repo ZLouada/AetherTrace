@@ -59,7 +59,7 @@ const colors = {
   dim: '\x1b[2m'
 };
 
-const CLI_VERSION = '0.1.0';
+const CLI_VERSION = '0.2.0';
 
 function printBanner() {
   console.log(`

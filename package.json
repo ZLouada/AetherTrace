@@ -1,6 +1,6 @@
 {
   "name": "aethertrace",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "packageManager": "pnpm@9.15.4",
   "scripts": {
@@ -27,6 +27,7 @@
     "test:phase13": "tsx examples/phase13-evaluation-test.ts",
     "test:phase14": "tsx examples/phase14-ecosystem-test.ts",
     "test:phase15": "tsx examples/phase15-developer-experience-test.ts",
+    "test:phase16": "tsx examples/phase16-hardening-release-test.ts",
     "demo:sim": "tsx examples/multi-agent-sim.ts",
     "cli": "tsx packages/cli/src/bin.ts",
     "start:proxy": "pnpm --filter @aethertrace/proxy-server start",
