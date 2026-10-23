@@ -67,17 +67,21 @@ AetherTrace is an open-source, 100% local-first telemetry and optimization works
 
 <div align="center">
 
-| Execution DAG Canvas (`:3000`) | Side-by-Side Diff Arena |
+| Execution DAG Canvas (`:3000`) | Replay & Experiment Studio (Phase 12) |
 | :---: | :---: |
-| [![Execution DAG](screenshots/01_execution_dag.png)](screenshots/README.md#1-execution-dag--flight-deck-ui) | [![Diff Arena](screenshots/05_diff_arena.png)](screenshots/README.md#5-side-by-side-diff-arena) |
+| [![Execution DAG](screenshots/01_execution_dag.png)](screenshots/README.md#1-execution-dag--flight-deck-ui) | [![Experiment Studio](screenshots/08_experiment_studio.png)](screenshots/README.md#8-replay--experiment-studio) |
 
-| Event & Node Inspector | ⌘K SQLite FTS5 Command Palette |
+| Evaluation & Optimization Studio (Phase 13) | Side-by-Side Diff Arena |
+| :---: | :---: |
+| [![Evaluation Studio](screenshots/09_evaluation_studio.png)](screenshots/README.md#9-evaluation--optimization-studio) | [![Diff Arena](screenshots/05_diff_arena.png)](screenshots/README.md#5-side-by-side-diff-arena) |
+
+| Event & Node Inspector Drawer | ⌘K SQLite FTS5 Command Palette |
 | :---: | :---: |
 | [![Inspector Drawer](screenshots/02_inspector_drawer.png)](screenshots/README.md#2-event--node-inspector-drawer) | [![Command Palette](screenshots/04_command_palette_search.png)](screenshots/README.md#4-command-palette-k--full-text-search) |
 
 </div>
 
-> 🔍 **Explore all 7 core interface screens in the [Screenshots Gallery](screenshots/README.md)** (Execution DAG, Inspector Drawer, Waterfall Timeline, ⌘K Command Palette, Diff Arena, Breakpoint Interceptor, Chaos Engineering).
+> 🔍 **Explore all 10 core interface screens in the [Screenshots Gallery](screenshots/README.md)** (Execution DAG, Inspector Drawer, Waterfall Timeline, ⌘K Command Palette, Diff Arena, Breakpoint Interceptor, Chaos Engineering, Experiment Studio, Evaluation Studio, Multi-Variant Matrix).
 
 ---
 

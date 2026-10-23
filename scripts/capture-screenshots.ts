@@ -85,21 +85,45 @@ async function main() {
     const page = await browser.newPage();
     console.log('  ✔ Navigating to http://localhost:3000...');
     await page.goto('http://localhost:3000', { waitUntil: 'networkidle0', timeout: 30000 });
-    await sleep(1500);
+    await sleep(2000);
+
+    // Filter to select the rich Multi-Agent Research Pipeline trace
+    try {
+      const searchRunsInput = await page.$('input[placeholder*="query or token"]');
+      if (searchRunsInput) {
+        await searchRunsInput.type('Multi-Agent', { delay: 20 });
+        await sleep(500);
+        await page.evaluate(() => {
+          const cards = Array.from(document.querySelectorAll('aside div.cursor-pointer'));
+          const target = cards.find((c) => c.textContent?.includes('Multi-Agent')) || cards[0];
+          if (target) (target as HTMLElement).click();
+        });
+        await sleep(1000);
+      }
+    } catch {
+      console.log('    (Selecting run fallback)');
+    }
 
     console.log('[4/4] Capturing UI Feature Screenshots...');
 
     // ---------------------------------------------------------------------------------
     // Feature 1: Main Flight Deck & Execution DAG Canvas
     // ---------------------------------------------------------------------------------
-    console.log('  📸 [1/7] Capturing 01_execution_dag.png...');
-    // Ensure DAG node rendered
+    console.log('  📸 [1/10] Capturing 01_execution_dag.png...');
     try {
       await page.waitForSelector('.react-flow__node', { timeout: 8000 });
       await sleep(1000);
     } catch {
       console.log('    (No nodes rendered, taking full canvas view)');
     }
+    // Pin a span so the pin indicator and badges appear
+    await page.keyboard.press('j');
+    await sleep(300);
+    await page.keyboard.press('p');
+    await sleep(300);
+    await page.keyboard.press('Escape');
+    await sleep(600);
+
     await page.screenshot({
       path: resolve(SCREENSHOTS_DIR, '01_execution_dag.png')
     });
@@ -108,10 +132,10 @@ async function main() {
     // ---------------------------------------------------------------------------------
     // Feature 2: Inspector Drawer & Time-Travel Fork IDE
     // ---------------------------------------------------------------------------------
-    console.log('  📸 [2/7] Capturing 02_inspector_drawer.png...');
+    console.log('  📸 [2/10] Capturing 02_inspector_drawer.png...');
     // Select a node to expand InspectorDrawer
     await page.keyboard.press('j');
-    await sleep(600);
+    await sleep(800);
     await page.screenshot({
       path: resolve(SCREENSHOTS_DIR, '02_inspector_drawer.png')
     });
@@ -120,23 +144,25 @@ async function main() {
     // ---------------------------------------------------------------------------------
     // Feature 3: Waterfall Execution Timeline
     // ---------------------------------------------------------------------------------
-    console.log('  📸 [3/7] Capturing 03_execution_timeline.png...');
+    console.log('  📸 [3/10] Capturing 03_execution_timeline.png...');
     // Make sure timeline is toggled open
-    await sleep(400);
+    await page.keyboard.press('t');
+    await sleep(600);
     await page.screenshot({
       path: resolve(SCREENSHOTS_DIR, '03_execution_timeline.png')
     });
     console.log('     ✔ Saved 03_execution_timeline.png');
 
+    // Close inspector & timeline
+    await page.keyboard.press('Escape');
+    await sleep(200);
+    await page.keyboard.press('t');
+    await sleep(300);
+
     // ---------------------------------------------------------------------------------
     // Feature 4: Instant ⌘K Command Palette & FTS5 Search
     // ---------------------------------------------------------------------------------
-    console.log('  📸 [4/7] Capturing 04_command_palette_search.png...');
-    // Close inspector if open
-    await page.keyboard.press('Escape');
-    await sleep(200);
-
-    // Open Command Palette via button or shortcut
+    console.log('  📸 [4/10] Capturing 04_command_palette_search.png...');
     const searchBtn = await page.$('button[title*="Command Palette"]');
     if (searchBtn) {
       await searchBtn.click();
@@ -147,7 +173,7 @@ async function main() {
     }
     await sleep(500);
 
-    // Type a search query into search input
+    // Type search query
     const input = await page.$('input[placeholder*="query"]');
     if (input) {
       await input.type('model:gpt-4o', { delay: 40 });
@@ -165,14 +191,14 @@ async function main() {
     // ---------------------------------------------------------------------------------
     // Feature 5: Side-by-Side Diff Arena
     // ---------------------------------------------------------------------------------
-    console.log('  📸 [5/7] Capturing 05_diff_arena.png...');
+    console.log('  📸 [5/10] Capturing 05_diff_arena.png...');
     const diffBtn = await page.$('button[title*="Diff Arena"]');
     if (diffBtn) {
       await diffBtn.click();
     } else {
       await page.keyboard.press('d');
     }
-    await sleep(1200);
+    await sleep(1500);
     await page.screenshot({
       path: resolve(SCREENSHOTS_DIR, '05_diff_arena.png')
     });
@@ -185,7 +211,7 @@ async function main() {
     // ---------------------------------------------------------------------------------
     // Feature 6: Live Breakpoint Interceptor & Mutation Controls
     // ---------------------------------------------------------------------------------
-    console.log('  📸 [6/7] Capturing 06_breakpoint_interceptor.png...');
+    console.log('  📸 [6/10] Capturing 06_breakpoint_interceptor.png...');
     const bpBtn = await page.$('button[title*="Configure Breakpoint"]');
     if (bpBtn) {
       await bpBtn.click();
@@ -205,7 +231,7 @@ async function main() {
     // ---------------------------------------------------------------------------------
     // Feature 7: Chaos Engineering Fault Injection
     // ---------------------------------------------------------------------------------
-    console.log('  📸 [7/7] Capturing 07_chaos_engineering.png...');
+    console.log('  📸 [7/10] Capturing 07_chaos_engineering.png...');
     const chaosBtn = await page.$('button[title*="Chaos Engineering"]');
     if (chaosBtn) {
       await chaosBtn.click();
@@ -222,8 +248,84 @@ async function main() {
     await page.keyboard.press('Escape');
     await sleep(300);
 
+    // ---------------------------------------------------------------------------------
+    // Feature 8: Replay & Experiment Studio (Phase 12)
+    // ---------------------------------------------------------------------------------
+    console.log('  📸 [8/10] Capturing 08_experiment_studio.png...');
+    const expBtn = await page.$('button[title*="Experiment Studio"]');
+    if (expBtn) {
+      await expBtn.click();
+    } else {
+      await page.keyboard.press('x');
+    }
+    await sleep(1500);
+    await page.screenshot({
+      path: resolve(SCREENSHOTS_DIR, '08_experiment_studio.png')
+    });
+    console.log('     ✔ Saved 08_experiment_studio.png');
+
+    // ---------------------------------------------------------------------------------
+    // Feature 9: Evaluation & Optimization Studio (Phase 13)
+    // ---------------------------------------------------------------------------------
+    // Close Experiment Studio
+    await page.keyboard.press('Escape');
+    await sleep(400);
+
+    console.log('  📸 [9/10] Capturing 09_evaluation_studio.png...');
+    const evalBtn = await page.$('button[title*="Evaluation"]');
+    if (evalBtn) {
+      await evalBtn.click();
+    } else {
+      await page.keyboard.press('e');
+    }
+    await sleep(1500);
+    // If no report is loaded, click "Evaluate Run"
+    try {
+      await page.evaluate(() => {
+        const btns = Array.from(document.querySelectorAll('button'));
+        const evalRunBtn = btns.find((b) => b.textContent?.includes('Evaluate Run'));
+        if (evalRunBtn) (evalRunBtn as HTMLElement).click();
+      });
+      await sleep(1500);
+    } catch {}
+    await page.screenshot({
+      path: resolve(SCREENSHOTS_DIR, '09_evaluation_studio.png')
+    });
+    console.log('     ✔ Saved 09_evaluation_studio.png');
+
+    // ---------------------------------------------------------------------------------
+    // Feature 10: Multi-Variant Comparison Matrix (Phase 12)
+    // ---------------------------------------------------------------------------------
+    // Close Evaluation Studio
+    await page.keyboard.press('Escape');
+    await sleep(400);
+
+    console.log('  📸 [10/10] Capturing 10_multi_variant_matrix.png...');
+    const expBtn2 = await page.$('button[title*="Experiment Studio"]');
+    if (expBtn2) {
+      await expBtn2.click();
+    } else {
+      await page.keyboard.press('x');
+    }
+    await sleep(1000);
+    // Click "Comparison Matrix" tab button
+    await page.evaluate(() => {
+      const btns = Array.from(document.querySelectorAll('button'));
+      const matrixTab = btns.find((b) => b.textContent?.includes('Comparison Matrix'));
+      if (matrixTab) (matrixTab as HTMLElement).click();
+    });
+    await sleep(1500);
+    await page.screenshot({
+      path: resolve(SCREENSHOTS_DIR, '10_multi_variant_matrix.png')
+    });
+    console.log('     ✔ Saved 10_multi_variant_matrix.png');
+
+    // Close modal
+    await page.keyboard.press('Escape');
+    await sleep(300);
+
     await browser.close();
-    console.log('\n✨ All 7 UI feature screenshots captured successfully into ./screenshots/!\n');
+    console.log('\n✨ All 10 UI feature screenshots captured successfully into ./screenshots/!\n');
   } finally {
     if (proxyProcess) proxyProcess.kill('SIGTERM');
     if (nextProcess) nextProcess.kill('SIGTERM');
