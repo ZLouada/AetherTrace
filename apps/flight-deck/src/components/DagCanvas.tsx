@@ -16,7 +16,7 @@ import { SpanNode } from './nodes/SpanNode';
 import { AgentGroupNode } from './nodes/AgentGroupNode';
 import { getLayoutedElements } from '@/lib/layout';
 import type { TraceSpan, TraceRun, ExecutionIntelligence, AgentSummary } from '@/lib/api';
-import { Network, ArrowDownUp, Zap, Layers, Filter, RotateCcw, AlertTriangle, Workflow, Wrench, Bot } from 'lucide-react';
+import { Network, ArrowDownUp, Zap, Layers, Filter, RotateCcw, AlertTriangle, Workflow, Wrench, Bot, Maximize2, Pin } from 'lucide-react';
 import { Button, EmptyState, Badge } from '@/design-system';
 
 interface DagCanvasProps {
@@ -36,6 +36,9 @@ interface DagCanvasProps {
   activeFilter?: string;
   onSelectFilter?: (filter: string) => void;
   onSelectAgentGroup?: (agent: AgentSummary) => void;
+  pinnedSpanIds?: Set<string>;
+  selectedSpanIds?: Set<string>;
+  onMultiSelectSpan?: (span: TraceSpan, isShiftOrCmd: boolean) => void;
 }
 
 const nodeTypes = {
@@ -59,7 +62,10 @@ function InnerDagCanvas({
   onToggleCriticalPathFocus,
   activeFilter = 'all',
   onSelectFilter,
-  onSelectAgentGroup
+  onSelectAgentGroup,
+  pinnedSpanIds,
+  selectedSpanIds,
+  onMultiSelectSpan
 }: DagCanvasProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -69,6 +75,7 @@ function InnerDagCanvas({
   const filteredSpans = useMemo(() => {
     if (!spans || spans.length === 0) return [];
     if (activeFilter === 'all') return spans;
+    if (activeFilter === 'pinned') return spans.filter((s) => pinnedSpanIds && pinnedSpanIds.has(s.id));
     if (activeFilter === 'agents') return spans.filter((s) => s.span_type === 'agent_state');
     if (activeFilter === 'llms') return spans.filter((s) => s.span_type === 'llm_call');
     if (activeFilter === 'tools') return spans.filter((s) => s.span_type === 'tool_call');
@@ -87,7 +94,7 @@ function InnerDagCanvas({
       return spans.filter((s) => cpSet.has(s.id));
     }
     return spans;
-  }, [spans, activeFilter, intelligence]);
+  }, [spans, activeFilter, intelligence, pinnedSpanIds]);
 
   // 2. Critical path set
   const criticalPathSpanIds = useMemo(() => {
@@ -122,7 +129,9 @@ function InnerDagCanvas({
         isCriticalPathFocused,
         collapsedAgentNames,
         agentSummaries: agentSummariesMap,
-        onExpandAgent: onToggleCollapseAgent
+        onExpandAgent: onToggleCollapseAgent,
+        pinnedSpanIds,
+        selectedSpanIds
       }
     );
 
@@ -145,13 +154,15 @@ function InnerDagCanvas({
     collapsedAgentNames,
     agentSummariesMap,
     onToggleCollapseAgent,
+    pinnedSpanIds,
+    selectedSpanIds,
     fitView,
     setNodes,
     setEdges
   ]);
 
   const handleNodeClick = useCallback(
-    (_: React.MouseEvent, node: any) => {
+    (e: React.MouseEvent, node: any) => {
       if (node.type === 'agentGroupNode') {
         const agent = node.data?.agent as AgentSummary;
         if (agent && onSelectAgentGroup) {
@@ -160,11 +171,15 @@ function InnerDagCanvas({
       } else {
         const span = node.data?.span as TraceSpan;
         if (span) {
-          onSelectSpan(span);
+          if ((e.shiftKey || e.metaKey || e.ctrlKey) && onMultiSelectSpan) {
+            onMultiSelectSpan(span, true);
+          } else {
+            onSelectSpan(span);
+          }
         }
       }
     },
-    [onSelectSpan, onSelectAgentGroup]
+    [onSelectSpan, onSelectAgentGroup, onMultiSelectSpan]
   );
 
   if (!selectedRun) {
@@ -202,7 +217,10 @@ function InnerDagCanvas({
         {/* Filter Bar Chips */}
         {onSelectFilter && (
           <div className="hidden lg:flex items-center bg-[#111114]/90 backdrop-blur-sm border border-[#2c2c32] p-0.5 rounded text-[11px] font-mono">
-            {(['all', 'agents', 'llms', 'tools', 'retries', 'errors'] as const).map((f) => (
+            {(pinnedSpanIds && pinnedSpanIds.size > 0
+              ? (['all', 'pinned', 'agents', 'llms', 'tools', 'retries', 'errors'] as const)
+              : (['all', 'agents', 'llms', 'tools', 'retries', 'errors'] as const)
+            ).map((f) => (
               <button
                 key={f}
                 onClick={() => onSelectFilter(f)}
@@ -212,11 +230,22 @@ function InnerDagCanvas({
                     : 'text-zinc-400 hover:text-zinc-200'
                 }`}
               >
-                {f}
+                {f === 'pinned' ? `📌 ${f} (${pinnedSpanIds?.size || 0})` : f}
               </button>
             ))}
           </div>
         )}
+
+        {/* Fit View Button */}
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => fitView({ padding: 0.2, duration: 400 })}
+          icon={<Maximize2 className="w-3 h-3 text-zinc-400" />}
+          title="Fit View to Screen (G)"
+        >
+          Fit View
+        </Button>
 
         {/* Critical Path Toggle */}
         {hasCriticalPath && onToggleCriticalPathFocus && (

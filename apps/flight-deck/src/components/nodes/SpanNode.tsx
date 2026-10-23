@@ -15,7 +15,8 @@ import {
   RotateCcw,
   AlertTriangle,
   User,
-  Workflow
+  Workflow,
+  Pin
 } from 'lucide-react';
 import type { TraceSpan } from '@/lib/api';
 import { Badge, getCategoryStyle } from '@/design-system';
@@ -23,12 +24,14 @@ import { Badge, getCategoryStyle } from '@/design-system';
 export interface SpanNodeData {
   span: TraceSpan;
   isSelected?: boolean;
+  isMultiSelected?: boolean;
+  isPinned?: boolean;
   isCriticalPath?: boolean;
   isSubdued?: boolean;
 }
 
 export const SpanNode = memo(({ data }: { data: SpanNodeData }) => {
-  const { span, isSelected, isCriticalPath, isSubdued } = data;
+  const { span, isSelected, isMultiSelected, isPinned, isCriticalPath, isSubdued } = data;
 
   const isCacheHit = span.cache_hit === 1;
   const isBreaker = span.span_type === 'guardrail_block';
@@ -127,6 +130,8 @@ export const SpanNode = memo(({ data }: { data: SpanNodeData }) => {
           ? 'border-red-500 shadow-[0_0_12px_rgba(239,68,68,0.25)]'
           : isSelected
           ? 'border-zinc-200 ring-1 ring-zinc-400/50 bg-[#17171b] shadow-lg'
+          : isMultiSelected
+          ? 'border-indigo-400 ring-2 ring-indigo-500/50 bg-[#16161f] shadow-md'
           : isCriticalPath
           ? 'border-amber-400/80 shadow-[0_0_10px_rgba(245,158,11,0.15)] bg-[#141310]'
           : 'border-[#2c2c32] hover:border-[#3f3f48]'
@@ -196,6 +201,16 @@ export const SpanNode = memo(({ data }: { data: SpanNodeData }) => {
 
         {/* Specialized High-Visibility Badges */}
         <div className="flex items-center gap-1">
+          {isPinned && (
+            <span
+              className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[10px] text-amber-300 bg-amber-950/70 border border-amber-500/60 font-mono shadow-xs"
+              title="Pinned Span (P)"
+            >
+              <Pin className="w-2.5 h-2.5 text-amber-400 fill-amber-400" />
+              Pin
+            </span>
+          )}
+
           {isIntercepted && (
             <Badge variant="origin" origin="modified" size="xs">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping inline-block mr-1" />

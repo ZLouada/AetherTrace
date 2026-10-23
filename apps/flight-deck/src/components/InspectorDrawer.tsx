@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   X,
   Copy,
@@ -37,7 +37,8 @@ import {
   GitMerge,
   Share2,
   CheckCircle2,
-  XCircle
+  XCircle,
+  Pin
 } from 'lucide-react';
 import type {
   TraceSpan,
@@ -76,6 +77,11 @@ interface InspectorDrawerProps {
   onResolveBreakpoint?: (spanId: string, resolution: BreakpointResolution) => Promise<void>;
   onToggleAgentBreakpoint?: (agentName: string) => void;
   isAgentBreakpointed?: boolean;
+  isPinned?: boolean;
+  onTogglePin?: (spanId: string) => void;
+  selectedSpans?: TraceSpan[];
+  onClearMultiSelection?: () => void;
+  childSpans?: TraceSpan[];
 }
 
 export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
@@ -91,12 +97,52 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
   isHeldBreakpoint,
   onResolveBreakpoint,
   onToggleAgentBreakpoint,
-  isAgentBreakpointed
+  isAgentBreakpointed,
+  isPinned,
+  onTogglePin,
+  selectedSpans,
+  onClearMultiSelection,
+  childSpans
 }) => {
   const [activeTab, setActiveTab] = useState<'inspector' | 'intelligence' | 'fork' | 'json'>('inspector');
   const [copiedHash, setCopiedHash] = useState(false);
   const [copiedResponse, setCopiedResponse] = useState(false);
   const [copiedId, setCopiedId] = useState(false);
+
+  const multiSelectSummary = useMemo(() => {
+    if (!selectedSpans || selectedSpans.length <= 1) return null;
+    let totalCost = 0;
+    let totalLatency = 0;
+    let totalPromptTok = 0;
+    let totalCompTok = 0;
+    const models = new Set<string>();
+    const agents = new Set<string>();
+    let errorCount = 0;
+
+    for (const s of selectedSpans) {
+      totalCost += s.cost_usd || 0;
+      totalLatency += s.latency_ms || 0;
+      totalPromptTok += s.prompt_tokens || 0;
+      totalCompTok += s.completion_tokens || 0;
+      if (s.model) models.add(s.model);
+      if (s.agent_name) agents.add(s.agent_name);
+      if (
+        s.span_type === 'guardrail_block' ||
+        (s.response_payload && (s.response_payload.includes('"error"') || s.response_payload.includes('"status":"error"')))
+      ) {
+        errorCount++;
+      }
+    }
+    return {
+      count: selectedSpans.length,
+      totalCost,
+      totalLatency,
+      totalTokens: totalPromptTok + totalCompTok,
+      models: Array.from(models),
+      agents: Array.from(agents),
+      errorCount
+    };
+  }, [selectedSpans]);
 
   // Section collapse state
   const [expandRequest, setExpandRequest] = useState(false);
@@ -339,7 +385,7 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
         <div className="flex items-center gap-2 min-w-0">
           <Terminal className="w-3.5 h-3.5 text-zinc-300 shrink-0" />
           <span className="text-xs font-mono font-semibold tracking-wide text-zinc-200 uppercase shrink-0">
-            {span ? 'Span Inspector' : 'Agent Summary'}
+            {multiSelectSummary ? `Selected (${multiSelectSummary.count})` : span ? 'Span Inspector' : 'Agent Summary'}
           </span>
           {span && (
             <button
@@ -357,9 +403,25 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
             </Badge>
           )}
         </div>
-        <IconButton label="Close Inspector (Esc)" size="sm" onClick={onClose}>
-          <X className="w-4 h-4" />
-        </IconButton>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {span && onTogglePin && (
+            <button
+              onClick={() => onTogglePin(span.id)}
+              className={`p-1 rounded transition-colors flex items-center gap-1 text-[11px] font-mono px-2 ${
+                isPinned
+                  ? 'bg-amber-950/80 text-amber-300 border border-amber-500/60'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#18181c] border border-[#2c2c32]'
+              }`}
+              title={isPinned ? 'Unpin Span (P)' : 'Pin Span (P)'}
+            >
+              <Pin className={`w-3 h-3 ${isPinned ? 'fill-amber-400 text-amber-400' : ''}`} />
+              <span>{isPinned ? 'Pinned' : 'Pin'}</span>
+            </button>
+          )}
+          <IconButton label="Close Inspector (Esc)" size="sm" onClick={onClose}>
+            <X className="w-4 h-4" />
+          </IconButton>
+        </div>
       </div>
 
       {/* Tabs Bar */}
@@ -499,6 +561,61 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
         {/* TAB 1: OVERVIEW */}
         {activeTab === 'inspector' && span && (
           <>
+            {/* Multi-Selection Summary Card */}
+            {multiSelectSummary && (
+              <div className="p-3 rounded bg-indigo-950/30 border border-indigo-600/50 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 text-xs font-semibold text-indigo-300 uppercase">
+                    <Layers className="w-3.5 h-3.5 text-indigo-400" />
+                    Multi-Selection ({multiSelectSummary.count} Spans)
+                  </span>
+                  {onClearMultiSelection && (
+                    <button
+                      onClick={onClearMultiSelection}
+                      className="text-[10px] text-zinc-400 hover:text-white underline font-mono cursor-pointer"
+                    >
+                      Clear Selection
+                    </button>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-[11px]">
+                  <div className="bg-[#0c0c0e] p-2 rounded border border-[#202024]">
+                    <span className="text-zinc-500 text-[10px] block">Aggregated Cost</span>
+                    <span className="text-white font-mono font-semibold">${multiSelectSummary.totalCost.toFixed(5)}</span>
+                  </div>
+                  <div className="bg-[#0c0c0e] p-2 rounded border border-[#202024]">
+                    <span className="text-zinc-500 text-[10px] block">Total Latency</span>
+                    <span className="text-white font-mono font-semibold">{multiSelectSummary.totalLatency}ms</span>
+                  </div>
+                  <div className="bg-[#0c0c0e] p-2 rounded border border-[#202024]">
+                    <span className="text-zinc-500 text-[10px] block">Combined Tokens</span>
+                    <span className="text-white font-mono font-semibold">{multiSelectSummary.totalTokens}</span>
+                  </div>
+                  <div className="bg-[#0c0c0e] p-2 rounded border border-[#202024]">
+                    <span className="text-zinc-500 text-[10px] block">Error Count</span>
+                    <span className={`font-mono font-semibold ${multiSelectSummary.errorCount > 0 ? 'text-rose-400' : 'text-zinc-400'}`}>
+                      {multiSelectSummary.errorCount}
+                    </span>
+                  </div>
+                </div>
+                <div className="pt-1 flex flex-wrap gap-1">
+                  {selectedSpans?.map((s) => (
+                    <button
+                      key={s.id}
+                      onClick={() => onSelectSpan && onSelectSpan(s.id)}
+                      className={`text-[10px] font-mono px-1.5 py-0.5 rounded border transition-colors cursor-pointer ${
+                        s.id === span?.id
+                          ? 'bg-indigo-600 text-white border-indigo-400'
+                          : 'bg-[#18181c] text-zinc-300 border-[#2c2c32] hover:border-zinc-500'
+                      }`}
+                    >
+                      {s.agent_name}:{s.model || s.span_type}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Critical Path & Intelligence Quick Strip */}
             {currentCriticalPathSpan && (
               <div className="p-2.5 rounded bg-amber-950/20 border border-amber-500/40 flex items-center justify-between text-xs">
@@ -572,7 +689,8 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
                   span.parent_span_id ? (
                     <button
                       onClick={() => onSelectParentSpan && onSelectParentSpan(span.parent_span_id!)}
-                      className="text-zinc-200 hover:text-white flex items-center gap-1 font-mono text-[10px]"
+                      className="text-zinc-200 hover:text-white flex items-center gap-1 font-mono text-[10px] cursor-pointer"
+                      title="Jump to Parent Span ([)"
                     >
                       <span>{span.parent_span_id}</span>
                       <ArrowUpRight className="w-2.5 h-2.5" />
@@ -582,6 +700,26 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
                   )
                 }
               />
+              {childSpans && childSpans.length > 0 && (
+                <DataRow
+                  label="Child Spans"
+                  value={
+                    <div className="flex flex-wrap gap-1">
+                      {childSpans.map((c) => (
+                        <button
+                          key={c.id}
+                          onClick={() => onSelectSpan && onSelectSpan(c.id)}
+                          className="text-zinc-200 hover:text-white flex items-center gap-1 font-mono text-[10px] bg-[#18181c] border border-[#2c2c32] hover:border-zinc-500 px-1.5 py-0.5 rounded cursor-pointer"
+                          title="Jump to Child Span (])"
+                        >
+                          <span>{c.agent_name}:{c.span_type}</span>
+                          <ChevronRight className="w-2.5 h-2.5 text-zinc-500" />
+                        </button>
+                      ))}
+                    </div>
+                  }
+                />
+              )}
             </div>
 
             {/* Tool Calls Section */}

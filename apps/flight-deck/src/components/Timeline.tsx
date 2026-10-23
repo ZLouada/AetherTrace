@@ -12,7 +12,8 @@ import {
   User,
   Bot,
   Zap,
-  Workflow
+  Workflow,
+  Pin
 } from 'lucide-react';
 import type { TraceSpan, TraceRun } from '@/lib/api';
 import { Badge, Divider } from '@/design-system';
@@ -25,6 +26,7 @@ interface TimelineProps {
   onToggleOpen: () => void;
   selectedRun: TraceRun | null;
   criticalPathSpanIds?: Set<string>;
+  pinnedSpanIds?: Set<string>;
 }
 
 export const Timeline: React.FC<TimelineProps> = ({
@@ -34,7 +36,8 @@ export const Timeline: React.FC<TimelineProps> = ({
   isOpen,
   onToggleOpen,
   selectedRun,
-  criticalPathSpanIds
+  criticalPathSpanIds,
+  pinnedSpanIds
 }) => {
   // Compute time offsets and duration
   const { sortedSpans, minTime, maxTime, totalDurationMs } = useMemo(() => {
@@ -184,6 +187,12 @@ export const Timeline: React.FC<TimelineProps> = ({
                       <span className="text-[9px] px-1 py-0.2 rounded bg-amber-950/60 text-amber-300 border border-amber-600/50 font-mono font-bold flex items-center gap-0.5">
                         <Zap className="w-2.5 h-2.5 fill-amber-400" />
                         CRITICAL
+                      </span>
+                    )}
+                    {pinnedSpanIds?.has(span.id) && (
+                      <span className="text-[9px] px-1 py-0.2 rounded bg-amber-950/70 text-amber-300 border border-amber-500/60 font-mono font-bold flex items-center gap-0.5">
+                        <Pin className="w-2.5 h-2.5 fill-amber-400" />
+                        PIN
                       </span>
                     )}
                     <span className="text-[10px] text-zinc-500 truncate">({typeLabel})</span>

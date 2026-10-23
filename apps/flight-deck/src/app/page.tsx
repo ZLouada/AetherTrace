@@ -59,6 +59,10 @@ export default function FlightDeckPage() {
   const [isCriticalPathFocused, setIsCriticalPathFocused] = useState<boolean>(false);
   const [activeFilter, setActiveFilter] = useState<string>('all');
 
+  // Flight Deck Developer Workstation State (Phase 15)
+  const [pinnedSpanIds, setPinnedSpanIds] = useState<Set<string>>(new Set());
+  const [selectedSpanIds, setSelectedSpanIds] = useState<Set<string>>(new Set());
+
   // Debugger Panel States
   const [isTimelineOpen, setIsTimelineOpen] = useState<boolean>(true);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState<boolean>(false);
@@ -191,6 +195,69 @@ export default function FlightDeckPage() {
     return new Set<string>(intelligence.criticalPath.spanIds);
   }, [intelligence]);
 
+  // Phase 15: Flight Deck Workstation Handlers
+  const handleTogglePinSpan = useCallback((spanId: string) => {
+    setPinnedSpanIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(spanId)) {
+        next.delete(spanId);
+      } else {
+        next.add(spanId);
+      }
+      return next;
+    });
+  }, []);
+
+  const handleMultiSelectSpan = useCallback((span: TraceSpan, isShiftOrCmd: boolean) => {
+    if (isShiftOrCmd) {
+      setSelectedSpanIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(span.id)) {
+          next.delete(span.id);
+        } else {
+          next.add(span.id);
+        }
+        return next;
+      });
+      setSelectedSpan(span);
+      setSelectedAgent(null);
+    } else {
+      setSelectedSpan(span);
+      setSelectedSpanIds(new Set([span.id]));
+      setSelectedAgent(null);
+    }
+  }, []);
+
+  const handleNavigateParent = useCallback(() => {
+    if (!selectedSpan || !selectedSpan.parent_span_id) return;
+    const parent = spans.find((s) => s.id === selectedSpan.parent_span_id);
+    if (parent) {
+      setSelectedSpan(parent);
+      setSelectedSpanIds(new Set([parent.id]));
+      setSelectedAgent(null);
+    }
+  }, [selectedSpan, spans]);
+
+  const handleNavigateChild = useCallback(() => {
+    if (!selectedSpan) return;
+    const child = spans.find((s) => s.parent_span_id === selectedSpan.id);
+    if (child) {
+      setSelectedSpan(child);
+      setSelectedSpanIds(new Set([child.id]));
+      setSelectedAgent(null);
+    }
+  }, [selectedSpan, spans]);
+
+  const childSpans = React.useMemo(() => {
+    if (!selectedSpan) return [];
+    return spans.filter((s) => s.parent_span_id === selectedSpan.id);
+  }, [selectedSpan, spans]);
+
+  const multiSelectedSpansList = React.useMemo(() => {
+    if (selectedSpanIds.size === 0) return [];
+    return spans.filter((s) => selectedSpanIds.has(s.id));
+  }, [selectedSpanIds, spans]);
+
   useEffect(() => {
     loadRuns();
     loadStats();
@@ -208,6 +275,8 @@ export default function FlightDeckPage() {
       setIntelligence(null);
       setSelectedAgent(null);
     }
+    setPinnedSpanIds(new Set());
+    setSelectedSpanIds(new Set());
   }, [selectedRunId, loadSpansForRun, loadIntelligence]);
 
   // 3. Real-Time WebSocket Telemetry Connection
@@ -384,6 +453,28 @@ export default function FlightDeckPage() {
             }
           }
           break;
+        case 'p':
+          if (selectedSpan) {
+            e.preventDefault();
+            handleTogglePinSpan(selectedSpan.id);
+          }
+          break;
+        case '[':
+          e.preventDefault();
+          handleNavigateParent();
+          break;
+        case ']':
+          e.preventDefault();
+          handleNavigateChild();
+          break;
+        case 'f':
+          e.preventDefault();
+          setActiveFilter((current) => {
+            const cycle = ['all', 'pinned', 'agents', 'llms', 'tools', 'retries', 'errors'];
+            const idx = cycle.indexOf(current);
+            return cycle[(idx + 1) % cycle.length];
+          });
+          break;
         case 'arrowdown':
         case 'j':
           if (spans.length > 0) {
@@ -391,6 +482,7 @@ export default function FlightDeckPage() {
             const currIdx = spans.findIndex((s) => s.id === selectedSpan?.id);
             const nextIdx = currIdx === -1 ? 0 : Math.min(spans.length - 1, currIdx + 1);
             setSelectedSpan(spans[nextIdx]);
+            setSelectedSpanIds(new Set([spans[nextIdx].id]));
           }
           break;
         case 'arrowup':
@@ -400,6 +492,7 @@ export default function FlightDeckPage() {
             const currIdx = spans.findIndex((s) => s.id === selectedSpan?.id);
             const prevIdx = currIdx <= 0 ? spans.length - 1 : currIdx - 1;
             setSelectedSpan(spans[prevIdx]);
+            setSelectedSpanIds(new Set([spans[prevIdx].id]));
           }
           break;
       }
@@ -415,7 +508,10 @@ export default function FlightDeckPage() {
     selectedSpan,
     spans,
     selectedRunId,
-    runs
+    runs,
+    handleTogglePinSpan,
+    handleNavigateParent,
+    handleNavigateChild
   ]);
 
   // 5. Simulation Handler
@@ -678,6 +774,7 @@ export default function FlightDeckPage() {
           selectedSpanId={selectedSpan?.id || null}
           onSelectSpan={(span) => {
             setSelectedSpan(span);
+            setSelectedSpanIds(new Set([span.id]));
             setSelectedAgent(null);
           }}
           direction={dagDirection}
@@ -691,6 +788,9 @@ export default function FlightDeckPage() {
           onToggleCriticalPathFocus={handleToggleCriticalPathFocus}
           activeFilter={activeFilter}
           onSelectFilter={setActiveFilter}
+          pinnedSpanIds={pinnedSpanIds}
+          selectedSpanIds={selectedSpanIds}
+          onMultiSelectSpan={handleMultiSelectSpan}
           onSelectAgentGroup={(agent) => {
             setSelectedAgent(agent);
             setSelectedSpan(null);
@@ -712,6 +812,7 @@ export default function FlightDeckPage() {
             onClose={() => {
               setSelectedSpan(null);
               setSelectedAgent(null);
+              setSelectedSpanIds(new Set());
             }}
             onForkSuccess={(newRunId) => {
               loadRuns(newRunId);
@@ -725,6 +826,7 @@ export default function FlightDeckPage() {
               const p = spans.find((s) => s.id === parentSpanId);
               if (p) {
                 setSelectedSpan(p);
+                setSelectedSpanIds(new Set([p.id]));
                 setSelectedAgent(null);
               }
             }}
@@ -732,6 +834,7 @@ export default function FlightDeckPage() {
               const s = spans.find((item) => item.id === spanId);
               if (s) {
                 setSelectedSpan(s);
+                setSelectedSpanIds(new Set([s.id]));
                 setSelectedAgent(null);
               }
             }}
@@ -741,6 +844,11 @@ export default function FlightDeckPage() {
             isAgentBreakpointed={Boolean(
               selectedSpan && breakpointConfig?.matchAgentNames.includes(selectedSpan.agent_name)
             )}
+            isPinned={Boolean(selectedSpan && pinnedSpanIds.has(selectedSpan.id))}
+            onTogglePin={handleTogglePinSpan}
+            selectedSpans={multiSelectedSpansList.length > 1 ? multiSelectedSpansList : undefined}
+            onClearMultiSelection={() => setSelectedSpanIds(new Set(selectedSpan ? [selectedSpan.id] : []))}
+            childSpans={childSpans}
           />
         )}
       </div>
@@ -751,12 +859,14 @@ export default function FlightDeckPage() {
         selectedSpanId={selectedSpan?.id || null}
         onSelectSpan={(span) => {
           setSelectedSpan(span);
+          setSelectedSpanIds(new Set([span.id]));
           setSelectedAgent(null);
         }}
         isOpen={isTimelineOpen}
         onToggleOpen={() => setIsTimelineOpen((p) => !p)}
         selectedRun={selectedRun}
         criticalPathSpanIds={criticalPathSpanIds}
+        pinnedSpanIds={pinnedSpanIds}
       />
 
       {/* Lightweight Command Palette (Cmd+K) */}
@@ -771,7 +881,10 @@ export default function FlightDeckPage() {
         }}
         spans={spans}
         selectedSpan={selectedSpan}
-        onSelectSpan={(span) => setSelectedSpan(span)}
+        onSelectSpan={(span) => {
+          setSelectedSpan(span);
+          setSelectedSpanIds(new Set([span.id]));
+        }}
         onSelectSearchResult={async (res) => {
           if (res.type === 'run') {
             setSelectedRunId(res.runId);
@@ -783,11 +896,17 @@ export default function FlightDeckPage() {
                 const data = await fetchRunSpans(res.runId);
                 setSpans(data.spans);
                 const target = data.spans.find((s) => s.id === res.spanId);
-                if (target) setSelectedSpan(target);
+                if (target) {
+                  setSelectedSpan(target);
+                  setSelectedSpanIds(new Set([target.id]));
+                }
               } catch {}
             } else {
               const target = spans.find((s) => s.id === res.spanId);
-              if (target) setSelectedSpan(target);
+              if (target) {
+                setSelectedSpan(target);
+                setSelectedSpanIds(new Set([target.id]));
+              }
             }
           }
         }}
@@ -811,6 +930,10 @@ export default function FlightDeckPage() {
         onCollapseAllAgents={handleCollapseAllAgents}
         onExpandAllAgents={handleExpandAllAgents}
         onSelectFilter={setActiveFilter}
+        onTogglePinSpan={handleTogglePinSpan}
+        onNavigateParent={handleNavigateParent}
+        onNavigateChild={handleNavigateChild}
+        onClearFilters={() => setActiveFilter('all')}
       />
 
       {/* Chaos Engineering Modal */}

@@ -20,7 +20,11 @@ import {
   Bookmark,
   X,
   Zap,
-  Target
+  Target,
+  Pin,
+  Maximize2,
+  ArrowUpRight,
+  ChevronRight
 } from 'lucide-react';
 import {
   searchTraces,
@@ -61,6 +65,11 @@ interface CommandPaletteProps {
   onCollapseAllAgents?: () => void;
   onExpandAllAgents?: () => void;
   onSelectFilter?: (filter: string) => void;
+  onTogglePinSpan?: (spanId: string) => void;
+  onFitGraphView?: () => void;
+  onNavigateParent?: () => void;
+  onNavigateChild?: () => void;
+  onClearFilters?: () => void;
 }
 
 interface PaletteItem {
@@ -99,8 +108,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   onToggleCriticalPathFocus,
   onCollapseAllAgents,
   onExpandAllAgents,
-  onSelectFilter
-}) => {
+  onSelectFilter,
+  onTogglePinSpan,
+  onFitGraphView,
+  onNavigateParent,
+  onNavigateChild,
+  onClearFilters
+}: CommandPaletteProps) => {
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [remoteResults, setRemoteResults] = useState<SearchResult[]>([]);
@@ -208,6 +222,72 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           run: onForkSpan
         });
       }
+
+      if (onTogglePinSpan && (!q || isCommandMode || 'pin unpin span'.includes(filterTerm))) {
+        actionList.push({
+          id: 'action-pin-span',
+          category: 'Actions',
+          label: `Pin / Unpin Span (${selectedSpan.agent_name})`,
+          detail: 'Toggle pinned state in workspace (P)',
+          icon: Pin,
+          run: () => onTogglePinSpan(selectedSpan.id)
+        });
+      }
+
+      if (selectedSpan.parent_span_id && onNavigateParent && (!q || isCommandMode || 'parent jump navigate'.includes(filterTerm))) {
+        actionList.push({
+          id: 'action-navigate-parent',
+          category: 'Actions',
+          label: 'Navigate to Parent Span',
+          detail: `Jump to ancestor ${selectedSpan.parent_span_id.slice(0, 8)} ([)`,
+          icon: ArrowUpRight,
+          run: onNavigateParent
+        });
+      }
+
+      if (onNavigateChild && (!q || isCommandMode || 'child jump navigate'.includes(filterTerm))) {
+        actionList.push({
+          id: 'action-navigate-child',
+          category: 'Actions',
+          label: 'Navigate to First Child Span',
+          detail: 'Jump to child execution (])',
+          icon: ChevronRight,
+          run: onNavigateChild
+        });
+      }
+    }
+
+    if (onFitGraphView && (!q || isCommandMode || 'fit graph view screen center'.includes(filterTerm))) {
+      actionList.push({
+        id: 'action-fit-view',
+        category: 'Actions',
+        label: 'Fit Graph View to Screen',
+        detail: 'Center and auto-fit entire execution DAG (G)',
+        icon: Maximize2,
+        run: onFitGraphView
+      });
+    }
+
+    if (onClearFilters && (!q || isCommandMode || 'clear filter reset all'.includes(filterTerm))) {
+      actionList.push({
+        id: 'action-clear-filters',
+        category: 'Actions',
+        label: 'Clear All Graph Filters',
+        detail: 'Reset DAG and timeline to show all spans',
+        icon: X,
+        run: onClearFilters
+      });
+    }
+
+    if (onSelectFilter && (!q || isCommandMode || 'filter pinned'.includes(filterTerm))) {
+      actionList.push({
+        id: 'action-filter-pinned',
+        category: 'Actions',
+        label: 'Filter: Pinned Spans Only',
+        detail: 'Only display pinned reference spans in DAG',
+        icon: Pin,
+        run: () => onSelectFilter('pinned')
+      });
     }
 
     if (!q || isCommandMode || 'timeline waterfall'.includes(filterTerm)) {

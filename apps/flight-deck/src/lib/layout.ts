@@ -14,6 +14,8 @@ export interface LayoutOptions {
   collapsedAgentNames?: Set<string>;
   agentSummaries?: Map<string, AgentSummary>;
   onExpandAgent?: (agentName: string) => void;
+  pinnedSpanIds?: Set<string>;
+  selectedSpanIds?: Set<string>;
 }
 
 export function getLayoutedElements(
@@ -35,6 +37,8 @@ export function getLayoutedElements(
   const isCriticalPathFocused = Boolean(opts.isCriticalPathFocused);
   const collapsedAgentNames = opts.collapsedAgentNames || new Set<string>();
   const agentSummaries = opts.agentSummaries || new Map<string, AgentSummary>();
+  const pinnedSpanIds = opts.pinnedSpanIds;
+  const selectedSpanIds = opts.selectedSpanIds;
 
   const dagreGraph = new dagre.graphlib.Graph();
   dagreGraph.setDefaultEdgeLabel(() => ({}));
@@ -97,6 +101,8 @@ export function getLayoutedElements(
         data: {
           span: s,
           isSelected: s.id === selectedSpanId,
+          isMultiSelected: Boolean(selectedSpanIds && selectedSpanIds.has(s.id)),
+          isPinned: Boolean(pinnedSpanIds && pinnedSpanIds.has(s.id)),
           isCriticalPath: criticalPathSpanIds?.has(s.id),
           isSubdued: isCriticalPathFocused && !criticalPathSpanIds?.has(s.id)
         },
