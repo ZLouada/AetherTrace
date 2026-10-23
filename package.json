@@ -25,6 +25,7 @@
     "test:phase11": "tsx examples/phase11-intelligence-test.ts",
     "test:phase12": "tsx examples/phase12-experiment-test.ts",
     "test:phase13": "tsx examples/phase13-evaluation-test.ts",
+    "test:phase14": "tsx examples/phase14-ecosystem-test.ts",
     "demo:sim": "tsx examples/multi-agent-sim.ts",
     "cli": "tsx packages/cli/src/bin.ts",
     "start:proxy": "pnpm --filter @aethertrace/proxy-server start",

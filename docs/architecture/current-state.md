@@ -413,6 +413,18 @@ graph TD
 
 ---
 
+### 3.20. Ecosystem & Integrations (`packages/core-schema/src/otel/`, `packages/sdk-ts/src/integrations/`, `packages/sdk-ts/src/deduplication.ts`, `packages/sdk-python/aethertrace/`, `apps/proxy-server/src/routes/otel.ts`, `packages/cli/`)
+- **100% Local-First & Zero Cloud Collectors:** AetherTrace operates strictly as a local visual debugger and execution analyzer with zero external cloud collectors or SaaS tracking dependencies.
+- **OpenTelemetry OTLP JSON (v1) Mapping:** Full bidirectional support for OTLP HTTP Protobuf-JSON v1 (`POST /v1/traces`), translating GenAI semantic conventions (`gen_ai.*`, `llm.*`) to AetherTrace domain events (`llm_call`, `tool_call`, `agent_invocation`, `http_request`, `guardrail_block`, `error`), and exporting runs back with `aethertrace.*` extension attributes.
+- **Deterministic Token Pricing Derivation:** Automatically calculates prompt and completion costs for imported OTel spans using `@aethertrace/pricing-engine`, labeling usage status as `estimated`.
+- **Zero-Trust Security & PII Redaction:** Strict regex scrubbing on all imported OpenTelemetry payloads and attributes, redacting API tokens, keys, and credentials prior to database insertion.
+- **Framework Adapters (LangChain & LangGraph):** Zero-dependency duck-typed `AetherTraceCallbackHandler` for TypeScript and Python intercepting model, tool, and chain lifecycles.
+- **Transparent SDK Wrappers & Function Decorators:** `wrapOpenAI` client routing, and `wrapTool` / `wrapAgent` higher-order function decorators for single-line instrumentation with automatic timing and error capture.
+- **Deduplication & Idempotency Guards:** Header-based coordination protocol (`X-AetherTrace-Span-Id`, `X-AetherTrace-Instrumented`) preventing duplicate spans when both framework handlers and the proxy interceptor observe calls.
+- **Flight Deck & CLI UX:** Origin source badge in Inspector Drawer (`OpenTelemetry OTLP`, `LangChain Adapter`, `Python SDK`, `AetherTrace SDK`), topbar OTel origin badges, CLI commands `aethertrace otel import` and `export`, and full compatibility with Phase 11 Intelligence and Phase 13 Evaluation.
+
+---
+
 ## 4. Architectural Verification Matrix
 
 | Verification Aspect | Command | Status | Result / Notes |
@@ -435,6 +447,7 @@ graph TD
 | **Phase 11 Agent Intelligence** | `pnpm test:phase11` | **PASSED** | Deterministic hierarchies, tool chains, parallel groups, retries, critical path DP, causal taxonomy, 10k scalability |
 | **Phase 12 Replay & Experiment Studio** | `pnpm test:phase12` | **PASSED** | Experiment CRUD, 4 mutation types, prefix caching, bounded batch execution, 9.65ms scorecard matrix, persistent replay history |
 | **Phase 13 Evaluation & Optimization** | `pnpm test:phase13` | **PASSED** | Zero-eval assertion DSL, evidence attachment, culprit localization, error clustering, root cause, optimization signals, CLI CI gate, 2.99ms SLA |
+| **Phase 14 Ecosystem & Integrations** | `pnpm test:phase14` | **PASSED** | OTel OTLP v1 mapping, GenAI conventions, LangChain handler, wrapOpenAI/tool/agent decorators, deduplication, 10/10 tests green |
 
 
 

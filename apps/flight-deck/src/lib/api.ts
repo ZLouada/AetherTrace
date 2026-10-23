@@ -1084,5 +1084,33 @@ export async function exportEvaluationApi(id: string, format: 'json' | 'markdown
   return res.text();
 }
 
+/**
+ * Exports an AetherTrace run as an OpenTelemetry OTLP JSON (v1) bundle.
+ */
+export async function exportOtlpApi(runId: string): Promise<any> {
+  const res = await fetch(buildUrl(`/api/runs/${runId}/export/otel`).toString(), { cache: 'no-store' });
+  if (!res.ok) throw new Error(`Failed to export run ${runId} to OTel`);
+  return res.json();
+}
+
+/**
+ * Imports an OpenTelemetry OTLP JSON (v1) bundle into AetherTrace.
+ */
+export async function importOtlpApi(rawJson: string, runNameOverride?: string): Promise<any> {
+  const params: Record<string, any> = {};
+  if (runNameOverride) params.run_name = runNameOverride;
+  const res = await fetch(buildUrl('/api/runs/import/otel', params).toString(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: rawJson
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error?.message || 'Failed to import OpenTelemetry trace');
+  }
+  return res.json();
+}
+
+
 
 

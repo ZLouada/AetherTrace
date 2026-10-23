@@ -31,6 +31,8 @@ import {
   exportEvaluationAsJson,
   exportEvaluationAsMarkdown,
   parseAssertionRule,
+  mapAetherTraceToOtlp,
+  parseAndImportOtlpJson,
   type TraceRun,
   type TraceSpan,
   type RunDiffResult,
@@ -89,6 +91,8 @@ function printHelp() {
   console.log(`  ${colors.green}assert <trace.json>${colors.reset}        Assert budget, latency SLA, and zero-breaker status`);
   console.log(`  ${colors.green}export <run_id>${colors.reset}            Export a run to a portable .trace.json bundle`);
   console.log(`  ${colors.green}import <file.json>${colors.reset}         Import a .trace.json bundle into local SQLite`);
+  console.log(`  ${colors.green}otel import <file.json>${colors.reset}    Import an OpenTelemetry OTLP JSON (v1) trace`);
+  console.log(`  ${colors.green}otel export <run_id>${colors.reset}       Export run to OpenTelemetry OTLP JSON (v1)`);
   console.log(`  ${colors.green}search <query> [--limit <n>] [--json]${colors.reset} Global search across runs, spans, events, and errors`);
   console.log(`  ${colors.green}search rebuild${colors.reset}              Rebuild search index projection from trace database`);
   console.log(`  ${colors.green}errors [--limit <n>] [--json]${colors.reset} Cross-run error aggregation and failure discovery`);
@@ -1627,6 +1631,92 @@ async function handleClean() {
   console.log(`${colors.green}✔ Removed ${removed} database file(s). Clean state restored.${colors.reset}\n`);
 }
 
+async function handleOtel(subcommand: string, subArgs: string[]) {
+  const { db, sqlite } = getDatabase();
+
+  switch (subcommand) {
+    case 'import': {
+      const filePath = subArgs[0];
+      if (!filePath) {
+        console.error(`${colors.red}Error: Missing <file.json> path.${colors.reset}`);
+        console.error(`Usage: aethertrace otel import <file.json> [--name <name>] [--id <id>]`);
+        process.exit(1);
+      }
+
+      const resolvedPath = resolve(process.cwd(), filePath);
+      if (!existsSync(resolvedPath)) {
+        console.error(`${colors.red}Error: File not found: ${resolvedPath}${colors.reset}`);
+        process.exit(1);
+      }
+
+      const nameIdx = subArgs.findIndex((a) => a === '--name' || a === '-n');
+      const runNameOverride = nameIdx !== -1 ? subArgs[nameIdx + 1] : undefined;
+
+      const idIdx = subArgs.findIndex((a) => a === '--id');
+      const runIdOverride = idIdx !== -1 ? subArgs[idIdx + 1] : undefined;
+
+      const content = readFileSync(resolvedPath, 'utf-8');
+      try {
+        const result = parseAndImportOtlpJson(db, sqlite, content, {
+          runNameOverride,
+          runIdOverride
+        });
+
+        console.log(`\n${colors.green}${colors.bold}✔ OpenTelemetry trace imported successfully!${colors.reset}`);
+        console.log(`  ${colors.bold}Run ID:${colors.reset}       ${colors.cyan}${result.runId}${colors.reset}`);
+        console.log(`  ${colors.bold}Run Name:${colors.reset}     ${colors.bold}${result.runName}${colors.reset}`);
+        console.log(`  ${colors.bold}Spans:${colors.reset}        ${colors.yellow}${result.spanCount}${colors.reset}`);
+        console.log(`  ${colors.bold}Total Tokens:${colors.reset} ${result.totalTokens}`);
+        console.log(`  ${colors.bold}Total Cost:${colors.reset}   $${result.totalCostUsd.toFixed(6)}`);
+        console.log(`  ${colors.bold}Status:${colors.reset}       ${result.status === 'failed' ? colors.red + 'failed' : colors.green + 'completed'}${colors.reset}\n`);
+      } catch (err: any) {
+        console.error(`${colors.red}Error importing OpenTelemetry trace:${colors.reset} ${err.message}`);
+        process.exit(1);
+      }
+      break;
+    }
+
+    case 'export': {
+      const runId = subArgs[0];
+      if (!runId) {
+        console.error(`${colors.red}Error: Missing <run_id> argument.${colors.reset}`);
+        console.error(`Usage: aethertrace otel export <run_id> [-o <file.json>]`);
+        process.exit(1);
+      }
+
+      const runs = db.select().from(trace_runs).where(eq(trace_runs.id, runId)).limit(1).all();
+      if (runs.length === 0) {
+        console.error(`${colors.red}Error: Run '${runId}' not found in local database.${colors.reset}`);
+        process.exit(1);
+      }
+
+      const spans = db
+        .select()
+        .from(trace_spans)
+        .where(eq(trace_spans.run_id, runId))
+        .orderBy(asc(trace_spans.created_at))
+        .all();
+
+      const otlpBundle = mapAetherTraceToOtlp(runs[0], spans);
+
+      const outIdx = subArgs.findIndex((a) => a === '-o' || a === '--output');
+      const outputFile = outIdx !== -1 ? subArgs[outIdx + 1] : `run_${runId}.otel.json`;
+      const dest = resolve(process.cwd(), outputFile);
+
+      writeFileSync(dest, JSON.stringify(otlpBundle, null, 2), 'utf-8');
+
+      console.log(`\n${colors.green}${colors.bold}✔ Exported run '${runId}' to OpenTelemetry OTLP JSON:${colors.reset} ${dest}`);
+      console.log(`  ${colors.dim}Spans converted: ${spans.length}${colors.reset}\n`);
+      break;
+    }
+
+    default:
+      console.error(`${colors.red}Unknown otel subcommand: ${subcommand}${colors.reset}`);
+      console.log(`Available subcommands: import, export`);
+      process.exit(1);
+  }
+}
+
 async function handleStatus(port: number = 4000) {
   printBanner();
   try {
@@ -1748,6 +1838,12 @@ async function runCli() {
       const subcommand = args[1] || 'list';
       const subArgs = args.slice(2);
       await handleEvaluate(subcommand, subArgs);
+      break;
+    }
+    case 'otel': {
+      const subcommand = args[1] || 'import';
+      const subArgs = args.slice(2);
+      await handleOtel(subcommand, subArgs);
       break;
     }
     case 'status': {

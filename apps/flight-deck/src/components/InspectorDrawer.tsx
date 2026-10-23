@@ -536,6 +536,28 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
             {/* Technical Metrics Card */}
             <div className="p-2.5 rounded bg-[#111114] border border-[#2c2c32] space-y-1">
               <DataRow label="Span Type" value={span.span_type.toUpperCase()} />
+              <DataRow
+                label="Telemetry Source"
+                value={
+                  span.id.startsWith('span_otel_') ? (
+                    <span className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                      OpenTelemetry OTLP
+                    </span>
+                  ) : span.id.startsWith('span_lc_') ? (
+                    <span className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                      LangChain Adapter
+                    </span>
+                  ) : span.id.startsWith('span_py_') ? (
+                    <span className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                      Python SDK
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                      AetherTrace SDK
+                    </span>
+                  )
+                }
+              />
               <DataRow label="Agent Name" value={span.agent_name} />
               <DataRow label="Target Model" value={span.model || '—'} />
               <DataRow label="Latency" value={span.cache_hit === 1 ? '0ms (cached)' : `${span.latency_ms}ms`} />

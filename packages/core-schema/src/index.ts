@@ -9,3 +9,4 @@ export * from './search/index.js';
 export * from './intelligence/index.js';
 export * from './experiments.js';
 export * from './evaluation/index.js';
+export * from './otel/index.js';

@@ -433,3 +433,81 @@ export class AetherTraceClient {
     return createTracedFetch(this.proxyBaseUrl)(input, init);
   }
 }
+
+/**
+ * Traces an LLM generation or completion call, capturing model, prompt, response, latency, and tokens.
+ */
+export async function traceLlm<T>(
+  model: string,
+  requestPayload: any,
+  fn: () => Promise<{ response: T; promptTokens?: number; completionTokens?: number; costUsd?: number }>,
+  options?: TraceSpanOptions
+): Promise<T> {
+  const startTime = Date.now();
+  const proxyUrl = options?.proxyBaseUrl || getDefaultProxyUrl();
+
+  try {
+    const result = await fn();
+    const duration = Date.now() - startTime;
+    await emitSpan({
+      spanType: 'llm_call',
+      model,
+      requestPayload,
+      responsePayload: result.response,
+      promptTokens: result.promptTokens,
+      completionTokens: result.completionTokens,
+      costUsd: result.costUsd,
+      latencyMs: duration
+    }, proxyUrl);
+    return result.response;
+  } catch (err: any) {
+    const duration = Date.now() - startTime;
+    await emitSpan({
+      spanType: 'llm_call',
+      model,
+      requestPayload,
+      responsePayload: {
+        status: 'error',
+        error: { message: err?.message || String(err), name: err?.name || 'LLMError' }
+      },
+      latencyMs: duration
+    }, proxyUrl);
+    throw err;
+  }
+}
+
+export interface AetherTraceConfig {
+  proxyBaseUrl?: string;
+  defaultAgentName?: string;
+}
+
+let globalConfig: AetherTraceConfig = {};
+
+/**
+ * Configures global AetherTrace SDK defaults.
+ */
+export function initAetherTrace(config: AetherTraceConfig = {}): void {
+  globalConfig = { ...globalConfig, ...config };
+  if (config.proxyBaseUrl) {
+    process.env.PROXY_SERVER_URL = config.proxyBaseUrl;
+  }
+}
+
+/**
+ * High-level ergonomic tracer interface.
+ */
+export const tracer = {
+  run: traceRun,
+  agent: traceAgent,
+  tool: traceTool,
+  llm: traceLlm,
+  http: traceHttp,
+  retry: traceRetry,
+  getHeaders: getTraceHeaders,
+  getContext: getTraceContext
+};
+
+export * from './deduplication.js';
+export * from './integrations/langchain.js';
+export * from './integrations/openai.js';
+

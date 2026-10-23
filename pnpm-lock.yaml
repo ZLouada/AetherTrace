@@ -140,6 +140,9 @@ importers:
 
   packages/core-schema:
     dependencies:
+      '@aethertrace/pricing-engine':
+        specifier: workspace:*
+        version: link:../pricing-engine
       better-sqlite3:
         specifier: ^11.8.1
         version: 11.10.0

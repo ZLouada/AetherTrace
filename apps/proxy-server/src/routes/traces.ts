@@ -21,6 +21,8 @@ import {
   indexRun,
   DEFAULT_LIMITS,
   analyzeExecutionIntelligence,
+  mapAetherTraceToOtlp,
+  parseAndImportOtlpJson,
   type TraceRun,
   type TraceSpan,
   type RunDiffResult,
@@ -175,6 +177,39 @@ tracesRouter.get('/runs/:id/export', async (c) => {
 });
 
 /**
+ * GET /api/runs/:id/export/otel - Export run as OpenTelemetry OTLP JSON (v1)
+ */
+tracesRouter.get('/runs/:id/export/otel', async (c) => {
+  const { db } = getDatabase();
+  const id = c.req.param('id');
+
+  const runs = db.select().from(trace_runs).where(eq(trace_runs.id, id)).limit(1).all();
+  if (runs.length === 0) {
+    return c.json({ error: { message: `Run '${id}' not found` } }, 404);
+  }
+
+  const spans = db
+    .select()
+    .from(trace_spans)
+    .where(eq(trace_spans.run_id, id))
+    .orderBy(asc(trace_spans.created_at))
+    .all();
+
+  const otlpBundle = mapAetherTraceToOtlp(runs[0], spans);
+
+  recordSecurityAudit({
+    operation: 'otel_trace_exported',
+    runId: id,
+    result: 'allowed',
+    details: { spanCount: spans.length, format: 'otlp_json' }
+  });
+
+  c.header('Content-Disposition', `attachment; filename="run_${id}.otel.json"`);
+  c.header('Content-Type', 'application/json');
+  return c.json(otlpBundle);
+});
+
+/**
  * POST /api/runs/import - Safely import and upsert a portable .trace.json bundle into local SQLite
  */
 tracesRouter.post('/runs/import', async (c) => {
@@ -320,6 +355,58 @@ tracesRouter.post('/runs/import', async (c) => {
     spanCount: spansData.length,
     run: preparedRun
   }, 201);
+});
+
+/**
+ * POST /api/runs/import/otel - Safely import an OpenTelemetry OTLP JSON (v1) trace into local SQLite
+ */
+tracesRouter.post('/runs/import/otel', async (c) => {
+  const { db, sqlite } = getDatabase();
+
+  const rawText = await c.req.text();
+  if (Buffer.byteLength(rawText, 'utf-8') > DEFAULT_LIMITS.MAX_IMPORT_BYTES) {
+    recordSecurityAudit({
+      operation: 'otel_trace_imported',
+      result: 'blocked',
+      reason: `OTel import payload exceeds maximum limit (${DEFAULT_LIMITS.MAX_IMPORT_BYTES} bytes)`
+    });
+    return c.json({ error: { message: `Import payload exceeds limit (${DEFAULT_LIMITS.MAX_IMPORT_BYTES} bytes)` } }, 400);
+  }
+
+  const runNameOverride = c.req.query('run_name') || undefined;
+  const runIdOverride = c.req.query('run_id') || undefined;
+
+  try {
+    const result = parseAndImportOtlpJson(db, sqlite, rawText, {
+      runNameOverride,
+      runIdOverride
+    });
+
+    const run = db.select().from(trace_runs).where(eq(trace_runs.id, result.runId)).limit(1).all()[0];
+
+    broadcastEvent({
+      type: 'RUN_CREATED',
+      data: run,
+      runId: result.runId
+    });
+
+    return c.json({
+      success: true,
+      message: `OpenTelemetry trace '${result.runName}' (${result.runId}) imported successfully`,
+      runId: result.runId,
+      spanCount: result.spanCount,
+      totalTokens: result.totalTokens,
+      totalCostUsd: result.totalCostUsd,
+      status: result.status,
+      run
+    }, 201);
+  } catch (err: any) {
+    return c.json({
+      error: {
+        message: err.message || 'Failed to import OpenTelemetry trace'
+      }
+    }, 400);
+  }
 });
 
 /**

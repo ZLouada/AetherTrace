@@ -40,6 +40,8 @@ export interface SecurityAuditEvent {
     | 'fork_created'
     | 'trace_imported'
     | 'trace_exported'
+    | 'otel_trace_imported'
+    | 'otel_trace_exported'
     | 'auth_failed'
     | 'dangerous_tool_blocked'
     | 'ssrf_blocked'

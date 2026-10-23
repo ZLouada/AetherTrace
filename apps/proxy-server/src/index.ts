@@ -9,6 +9,7 @@ import { controlRouter } from './routes/control.js';
 import { searchRouter } from './routes/search.js';
 import { experimentsRouter } from './routes/experiments.js';
 import { evaluationsRouter } from './routes/evaluations.js';
+import { otelRouter } from './routes/otel.js';
 import { registerClient, unregisterClient, getClientCount, broadcastEvent } from './broadcaster.js';
 import {
   getDatabase,
@@ -211,6 +212,7 @@ app.get('/api/security/audit', (c) => {
 
 // 6. Mount Application Routes
 app.route('/', proxyRouter);
+app.route('/', otelRouter);
 app.route('/api', tracesRouter);
 app.route('/api', controlRouter);
 app.route('/api', experimentsRouter);

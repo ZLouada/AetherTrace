@@ -44,6 +44,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Flight Deck Evaluation Studio:** 5-tab evaluation studio modal (`Overview & Metrics`, `Assertions`, `Root Cause & Errors`, `Optimization Signals`, `Evaluation History`), global shortcut `E`, command palette action (`⌘K`), clickable span deep-linking, real-time DSL rule builder, and one-click JSON/Markdown report export.
   - **CLI Evaluation Suite:** `aethertrace evaluate` commands (`list`, `run`, `assert`, `inspect`, `failures`, `errors`, `optimize`, `compare`, `export`).
 
+- **Phase 14: Ecosystem & Integrations**
+  - **100% Local-First Ecosystem Interop:** Seamlessly debug agents built with external frameworks without rewriting codebase logic, and without any third-party cloud collectors or SaaS accounts.
+  - **OpenTelemetry OTLP JSON (v1) Mapping:** Full bidirectional support for OTLP HTTP Protobuf-JSON v1 (`POST /v1/traces`), translating OpenTelemetry GenAI semantic conventions (`gen_ai.*`, `llm.*`) to native AetherTrace execution events (`llm_call`, `tool_call`, `agent_invocation`, `http_request`, `guardrail_block`, `error`), and exporting runs back with `aethertrace.*` extension attributes.
+  - **Deterministic Pricing Engine Derivation:** Automatically calculates prompt and completion costs for imported OTel spans using `@aethertrace/pricing-engine`, labeling usage status as `estimated`.
+  - **Zero-Trust Security & PII Redaction:** Mandatory deep regex scrubbing on all imported OpenTelemetry payloads and attributes, redacting API keys, bearer tokens, and credentials prior to database insertion.
+  - **Framework Adapters (LangChain & LangGraph):** Zero-dependency duck-typed `AetherTraceCallbackHandler` for TypeScript and Python intercepting model, tool, and chain lifecycles and linking parent-child DAG relationships.
+  - **Transparent SDK Wrappers & Function Decorators:** `wrapOpenAI` client routing, and `wrapTool` / `wrapAgent` higher-order function decorators for single-line instrumentation with automatic timing and error capture.
+  - **Deduplication & Idempotency Guards:** Header-based coordination protocol (`X-AetherTrace-Span-Id`, `X-AetherTrace-Instrumented`) preventing duplicate spans when both framework handlers and the proxy interceptor observe calls.
+  - **Proxy Server REST APIs:** OTLP collector (`POST /v1/traces`), file import (`POST /api/runs/import/otel`), and export (`GET /api/runs/:id/export/otel`).
+  - **Flight Deck & CLI UX:** Telemetry source origin badges in Inspector Drawer (`OpenTelemetry OTLP`, `LangChain Adapter`, `Python SDK`, `AetherTrace SDK`), topbar OTel origin badges, CLI commands `aethertrace otel import` and `export`, and full downstream compatibility with Phase 11 Intelligence and Phase 13 Evaluation.
+
 ---
 
 

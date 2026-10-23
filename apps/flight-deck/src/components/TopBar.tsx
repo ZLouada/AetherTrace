@@ -133,6 +133,12 @@ export const TopBar: React.FC<TopBarProps> = ({
             </Badge>
           )}
 
+          {(selectedRun.id.startsWith('run_otel_') || selectedRun.name.startsWith('otel-')) && (
+            <span className="text-[10px] font-mono font-semibold px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
+              OTel
+            </span>
+          )}
+
           <Divider orientation="vertical" />
 
           <span className="text-zinc-400 text-[11px]">{selectedRun.total_tokens} tok</span>
