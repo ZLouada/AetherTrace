@@ -127,7 +127,7 @@ export const ChaosModal: React.FC<ChaosModalProps> = ({
             onChange={(e) => setLatencySpikeMs(Number(e.target.value))}
             className="w-full accent-amber-400 cursor-pointer bg-zinc-800 rounded h-1.5"
           />
-          <div className="flex justify-between text-[10px] text-zinc-500">
+          <div className="flex justify-between text-[10px] text-zinc-400">
             <span>0ms (Off)</span>
             <span>2500ms</span>
             <span>5000ms</span>
@@ -199,9 +199,9 @@ export const ChaosModal: React.FC<ChaosModalProps> = ({
           <AlertTriangle className="w-3.5 h-3.5 text-zinc-400 shrink-0 mt-0.5" />
           <span>
             Tip: You can test faults on specific calls using the{' '}
-            <code className="text-white bg-black/60 px-1 py-0.2 rounded border border-zinc-800">X-Chaos-Inject</code> header (e.g.{' '}
-            <code className="text-white bg-black/60 px-1 py-0.2 rounded border border-zinc-800">rate_limit</code>,{' '}
-            <code className="text-white bg-black/60 px-1 py-0.2 rounded border border-zinc-800">corrupt_json</code>).
+            <code className="text-white bg-black/60 px-1.5 py-0.5 rounded border border-zinc-800">X-Chaos-Inject</code> header (e.g.{' '}
+            <code className="text-white bg-black/60 px-1.5 py-0.5 rounded border border-zinc-800">rate_limit</code>,{' '}
+            <code className="text-white bg-black/60 px-1.5 py-0.5 rounded border border-zinc-800">corrupt_json</code>).
           </span>
         </div>
       </div>

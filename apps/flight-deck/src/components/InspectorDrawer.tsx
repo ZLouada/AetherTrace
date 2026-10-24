@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   X,
   Copy,
@@ -14,7 +14,6 @@ import {
   AlertTriangle,
   Play,
   RotateCcw,
-  Loader2,
   FileText,
   PauseCircle,
   FlaskConical,
@@ -28,17 +27,14 @@ import {
   User,
   ShieldAlert,
   GitBranch,
-  GitCommit,
-  Package,
   Workflow,
   Zap,
   Layers,
-  Brain,
   GitMerge,
   Share2,
-  CheckCircle2,
-  XCircle,
-  Pin
+  Pin,
+  Sparkles,
+  ListTree
 } from 'lucide-react';
 import type {
   TraceSpan,
@@ -46,11 +42,7 @@ import type {
   RunProvenance,
   BreakpointResolution,
   ExecutionIntelligence,
-  AgentSummary,
-  ToolChain,
-  IntelligentRetryChain,
-  CriticalPathSpan,
-  CausalRelation
+  AgentSummary
 } from '@/lib/api';
 import { forkSpan, replaySpan, postChatCompletion } from '@/lib/api';
 import {
@@ -59,8 +51,7 @@ import {
   Badge,
   DataRow,
   Select,
-  Input,
-  Divider
+  Input
 } from '@/design-system';
 
 interface InspectorDrawerProps {
@@ -82,6 +73,7 @@ interface InspectorDrawerProps {
   selectedSpans?: TraceSpan[];
   onClearMultiSelection?: () => void;
   childSpans?: TraceSpan[];
+  width?: number;
 }
 
 export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
@@ -102,13 +94,41 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
   onTogglePin,
   selectedSpans,
   onClearMultiSelection,
-  childSpans
+  childSpans,
+  width = 400
 }) => {
-  const [activeTab, setActiveTab] = useState<'inspector' | 'intelligence' | 'fork' | 'json'>('inspector');
-  const [copiedHash, setCopiedHash] = useState(false);
-  const [copiedResponse, setCopiedResponse] = useState(false);
+  // Navigation filter: 'all' shows the unified vertical document; other modes filter down to focused sections
+  const [activeSection, setActiveSection] = useState<'all' | 'payload' | 'intelligence' | 'fork' | 'json'>('all');
   const [copiedId, setCopiedId] = useState(false);
+  const [copiedJson, setCopiedJson] = useState(false);
+  const [copiedResponse, setCopiedResponse] = useState(false);
+  const [copiedPromptIdx, setCopiedPromptIdx] = useState<number | null>(null);
 
+  // Section collapse states
+  const [expandPayload, setExpandPayload] = useState(true);
+  const [expandIntelligence, setExpandIntelligence] = useState(true);
+  const [expandChildren, setExpandChildren] = useState(true);
+  const [expandFork, setExpandFork] = useState(false);
+  const [expandJson, setExpandJson] = useState(false);
+
+  // Breakpoint Intercept State
+  const [editedPayloadJson, setEditedPayloadJson] = useState<string>('{}');
+  const [mockResponseText, setMockResponseText] = useState<string>('');
+  const [isResolving, setIsResolving] = useState<boolean>(false);
+  const [interceptError, setInterceptError] = useState<string | null>(null);
+
+  // Replay State
+  const [isReplaying, setIsReplaying] = useState(false);
+  const [replayError, setReplayError] = useState<string | null>(null);
+
+  // Fork IDE State
+  const [forkModel, setForkModel] = useState<string>('gpt-4o');
+  const [forkAgentName, setForkAgentName] = useState<string>('Planner');
+  const [forkMessagesJson, setForkMessagesJson] = useState<string>('[]');
+  const [forkJsonError, setForkJsonError] = useState<string | null>(null);
+  const [isForking, setIsForking] = useState(false);
+
+  // Multi-select aggregated metrics
   const multiSelectSummary = useMemo(() => {
     if (!selectedSpans || selectedSpans.length <= 1) return null;
     let totalCost = 0;
@@ -128,7 +148,8 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
       if (s.agent_name) agents.add(s.agent_name);
       if (
         s.span_type === 'guardrail_block' ||
-        (s.response_payload && (s.response_payload.includes('"error"') || s.response_payload.includes('"status":"error"')))
+        (s.response_payload &&
+          (s.response_payload.includes('"error"') || s.response_payload.includes('"status":"error"')))
       ) {
         errorCount++;
       }
@@ -143,36 +164,6 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
       errorCount
     };
   }, [selectedSpans]);
-
-  // Section collapse state
-  const [expandRequest, setExpandRequest] = useState(false);
-  const [expandResponse, setExpandResponse] = useState(true);
-  const [expandToolArgs, setExpandToolArgs] = useState(true);
-  const [expandToolResult, setExpandToolResult] = useState(true);
-
-  // Breakpoint Intercept State
-  const [editedPayloadJson, setEditedPayloadJson] = useState<string>('{}');
-  const [mockResponseText, setMockResponseText] = useState<string>('');
-  const [isResolving, setIsResolving] = useState<boolean>(false);
-  const [interceptError, setInterceptError] = useState<string | null>(null);
-
-  // Replay State
-  const [isReplaying, setIsReplaying] = useState(false);
-  const [replayError, setReplayError] = useState<string | null>(null);
-
-  // Fork IDE State
-  const [forkModel, setForkModel] = useState<string>('gpt-4o');
-  const [forkAgentName, setForkAgentName] = useState<string>('Planner');
-  const [forkMessagesJson, setForkMessagesJson] = useState<string>('[]');
-  const [forkJsonError, setForkJsonError] = useState<string | null>(null);
-  const [isForking, setIsForking] = useState(false);
-
-  // If selectedAgent is provided and no span, switch to intelligence tab
-  useEffect(() => {
-    if (!span && selectedAgent) {
-      setActiveTab('intelligence');
-    }
-  }, [span, selectedAgent]);
 
   // Sync state when selected span changes
   useEffect(() => {
@@ -205,17 +196,40 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
 
   const isIntercepted = Boolean(
     span &&
-    (isHeldBreakpoint ||
-      span.response_payload?.includes('"status":"intercepted"') ||
-      span.response_payload?.includes('"status": "intercepted"') ||
-      span.response_payload?.includes('"awaiting_human": true') ||
-      span.response_payload?.includes('"awaiting_human":true'))
+      (isHeldBreakpoint ||
+        span.response_payload?.includes('"status":"intercepted"') ||
+        span.response_payload?.includes('"status": "intercepted"') ||
+        span.response_payload?.includes('"awaiting_human": true') ||
+        span.response_payload?.includes('"awaiting_human":true'))
+  );
+
+  const isError = Boolean(
+    span &&
+      (span.span_type === 'guardrail_block' ||
+        (span.response_payload &&
+          (span.response_payload.includes('"error"') ||
+            span.response_payload.includes('"status":"error"') ||
+            span.response_payload.includes('"is_error":true'))))
   );
 
   const handleCopyId = (idToCopy: string) => {
     navigator.clipboard.writeText(idToCopy);
     setCopiedId(true);
     setTimeout(() => setCopiedId(false), 2000);
+  };
+
+  const handleCopyText = (text: string, type: 'json' | 'response' | 'prompt', index?: number) => {
+    navigator.clipboard.writeText(text);
+    if (type === 'json') {
+      setCopiedJson(true);
+      setTimeout(() => setCopiedJson(false), 2000);
+    } else if (type === 'response') {
+      setCopiedResponse(true);
+      setTimeout(() => setCopiedResponse(false), 2000);
+    } else if (type === 'prompt' && index !== undefined) {
+      setCopiedPromptIdx(index);
+      setTimeout(() => setCopiedPromptIdx(null), 2000);
+    }
   };
 
   const handleReplaySpan = async () => {
@@ -253,16 +267,19 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
 
       const newRunId = forkRes.newRunId;
 
-      await postChatCompletion({
-        model: forkModel,
-        messages: parsedMessages,
-        temperature: 0.7
-      }, {
-        runId: newRunId,
-        runName: `${run?.name || 'Run'}-fork-${forkAgentName}`,
-        agentName: forkAgentName,
-        parentSpanId: span.id
-      });
+      await postChatCompletion(
+        {
+          model: forkModel,
+          messages: parsedMessages,
+          temperature: 0.7
+        },
+        {
+          runId: newRunId,
+          runName: `${run?.name || 'Run'}-fork-${forkAgentName}`,
+          agentName: forkAgentName,
+          parentSpanId: span.id
+        }
+      );
 
       onForkSuccess(newRunId);
     } catch (err: any) {
@@ -324,6 +341,7 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
     }
   };
 
+  // Parsed payloads
   let parsedRequest: any = null;
   let parsedResponse: any = null;
   if (span) {
@@ -335,6 +353,7 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
     } catch {}
   }
 
+  // Provenance extraction
   let runProv: RunProvenance | null = null;
   if (run?.provenance) {
     if (typeof run.provenance === 'string') {
@@ -346,7 +365,7 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
     }
   }
 
-  // --- Intelligence Lookups for Active Span / Agent ---
+  // Intelligence lookups
   const currentAgentSummary: AgentSummary | null =
     selectedAgent ||
     (span && intelligence?.agents.find((a) => a.agentName === span.agent_name)) ||
@@ -374,48 +393,96 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
   const causedRelations =
     (span && intelligence?.causalRelations.filter((r) => r.sourceSpanId === span.id)) || [];
 
-  const createdTime = span
-    ? new Date(span.created_at).toISOString().split('T')[1]?.replace('Z', '') || `${span.created_at}`
-    : '';
+  // Determine Category details
+  let CategoryIcon = Cpu;
+  let categoryKey: 'LLM' | 'TOOL' | 'HTTP' | 'RETRY' | 'ERROR' | 'USER' | 'AGENT' = 'LLM';
+  if (span?.span_type === 'tool_call') {
+    CategoryIcon = Wrench;
+    categoryKey = 'TOOL';
+  } else if (span?.span_type === 'http_call') {
+    CategoryIcon = Globe;
+    categoryKey = 'HTTP';
+  } else if (span?.span_type === 'retry') {
+    CategoryIcon = RotateCcw;
+    categoryKey = 'RETRY';
+  } else if (span?.span_type === 'guardrail_block') {
+    CategoryIcon = ShieldAlert;
+    categoryKey = 'ERROR';
+  } else if (span?.span_type === 'user_input') {
+    CategoryIcon = User;
+    categoryKey = 'USER';
+  } else if (span?.span_type === 'agent_state' || (span?.span_type as string) === 'agent_dispatch') {
+    CategoryIcon = Workflow;
+    categoryKey = 'AGENT';
+  }
 
   return (
-    <aside className="w-[460px] h-full border-l border-[#202024] bg-[#0c0c0e] flex flex-col shrink-0 shadow-2xl z-20 select-none">
-      {/* Drawer Header */}
-      <div className="px-3.5 py-2.5 border-b border-[#202024] bg-[#09090b] flex items-center justify-between">
+    <aside
+      className="h-full border-l border-[#202024] bg-[#0c0c0e] flex flex-col shrink-0 shadow-2xl z-20 select-none overflow-hidden"
+      style={{ width: `${width}px` }}
+    >
+      {/* 1. STICKY HEADER */}
+      <div className="px-3.5 py-2.5 border-b border-[#202024] bg-[#09090b] flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2 min-w-0">
-          <Terminal className="w-3.5 h-3.5 text-zinc-300 shrink-0" />
-          <span className="text-xs font-mono font-semibold tracking-wide text-zinc-200 uppercase shrink-0">
-            {multiSelectSummary ? `Selected (${multiSelectSummary.count})` : span ? 'Span Inspector' : 'Agent Summary'}
-          </span>
-          {span && (
-            <button
-              onClick={() => handleCopyId(span.id)}
-              className="flex items-center gap-1 text-[10px] font-mono px-2 py-0.5 rounded bg-[#18181c] text-zinc-400 hover:text-white border border-[#2c2c32] truncate max-w-[170px] transition-colors"
-              title="Click to copy span ID"
-            >
-              <span className="truncate">{span.id}</span>
-              {copiedId ? <Check className="w-2.5 h-2.5 text-white" /> : <Copy className="w-2.5 h-2.5" />}
-            </button>
-          )}
-          {!span && selectedAgent && (
-            <Badge variant="category" category="AGENT" size="xs">
-              {selectedAgent.agentName}
-            </Badge>
+          {span ? (
+            <>
+              <span
+                className={`w-2 h-2 rounded-full shrink-0 ${
+                  isIntercepted
+                    ? 'bg-amber-400 animate-ping'
+                    : isError
+                    ? 'bg-rose-500'
+                    : 'bg-emerald-400'
+                }`}
+              />
+              <Badge
+                variant="category"
+                category={categoryKey}
+                size="xs"
+                icon={<CategoryIcon className="w-3 h-3 shrink-0" />}
+              >
+                {span.agent_name}
+              </Badge>
+              <button
+                onClick={() => handleCopyId(span.id)}
+                className="flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#16161a] text-zinc-400 hover:text-white border border-[#27272a] truncate max-w-[140px] transition-colors cursor-pointer"
+                title="Click to copy full span ID"
+              >
+                <span className="truncate">{span.id}</span>
+                {copiedId ? (
+                  <Check className="w-2.5 h-2.5 text-emerald-400" />
+                ) : (
+                  <Copy className="w-2.5 h-2.5" />
+                )}
+              </button>
+            </>
+          ) : selectedAgent ? (
+            <>
+              <Workflow className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+              <span className="text-xs font-mono font-semibold text-zinc-100 truncate">
+                Agent: {selectedAgent.agentName}
+              </span>
+            </>
+          ) : (
+            <span className="text-xs font-mono font-semibold text-zinc-300">
+              Inspector
+            </span>
           )}
         </div>
+
         <div className="flex items-center gap-1.5 shrink-0">
           {span && onTogglePin && (
             <button
               onClick={() => onTogglePin(span.id)}
-              className={`p-1 rounded transition-colors flex items-center gap-1 text-[11px] font-mono px-2 ${
+              className={`p-1 rounded transition-colors flex items-center gap-1 text-[11px] font-mono px-2 cursor-pointer ${
                 isPinned
                   ? 'bg-amber-950/80 text-amber-300 border border-amber-500/60'
-                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#18181c] border border-[#2c2c32]'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#18181c] border border-[#27272a]'
               }`}
               title={isPinned ? 'Unpin Span (P)' : 'Pin Span (P)'}
             >
               <Pin className={`w-3 h-3 ${isPinned ? 'fill-amber-400 text-amber-400' : ''}`} />
-              <span>{isPinned ? 'Pinned' : 'Pin'}</span>
+              <span className="text-[10px]">{isPinned ? 'Pinned' : 'Pin'}</span>
             </button>
           )}
           <IconButton label="Close Inspector (Esc)" size="sm" onClick={onClose}>
@@ -424,66 +491,139 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
         </div>
       </div>
 
-      {/* Tabs Bar */}
-      <div className="flex items-center border-b border-[#202024] bg-[#111114] px-3 font-mono text-xs">
-        {span && (
-          <button
-            onClick={() => setActiveTab('inspector')}
-            className={`py-2 px-3 border-b-2 font-medium transition-colors flex items-center gap-1.5 ${
-              activeTab === 'inspector'
-                ? 'border-white text-white'
-                : 'border-transparent text-zinc-400 hover:text-zinc-200'
-            }`}
-          >
-            <FileText className="w-3.5 h-3.5" />
-            Overview
-          </button>
-        )}
-
+      {/* 2. SECTION ANCHOR NAV (Unified Navigation Bar) */}
+      <div className="flex items-center border-b border-[#202024] bg-[#111114] px-2 py-1 font-mono text-[11px] gap-1 shrink-0 overflow-x-auto">
         <button
-          onClick={() => setActiveTab('intelligence')}
-          className={`py-2 px-3 border-b-2 font-medium transition-colors flex items-center gap-1.5 ${
-            activeTab === 'intelligence'
-              ? 'border-white text-white'
-              : 'border-transparent text-zinc-400 hover:text-zinc-200'
+          onClick={() => setActiveSection('all')}
+          className={`px-2 py-1 rounded transition-colors flex items-center gap-1 cursor-pointer ${
+            activeSection === 'all'
+              ? 'bg-[#27272a] text-white font-medium'
+              : 'text-zinc-400 hover:text-zinc-200'
           }`}
         >
-          <Workflow className="w-3.5 h-3.5 text-cyan-400" />
-          Intelligence
+          <FileText className="w-3 h-3" />
+          Overview
         </button>
-
         {span && (
           <button
-            onClick={() => setActiveTab('fork')}
-            className={`py-2 px-3 border-b-2 font-medium transition-colors flex items-center gap-1.5 ${
-              activeTab === 'fork'
-                ? 'border-white text-white'
-                : 'border-transparent text-zinc-400 hover:text-zinc-200'
+            onClick={() => setActiveSection('payload')}
+            className={`px-2 py-1 rounded transition-colors flex items-center gap-1 cursor-pointer ${
+              activeSection === 'payload'
+                ? 'bg-[#27272a] text-white font-medium'
+                : 'text-zinc-400 hover:text-zinc-200'
             }`}
           >
-            <GitFork className="w-3.5 h-3.5" />
+            <Code2 className="w-3 h-3" />
+            Payload
+          </button>
+        )}
+        <button
+          onClick={() => setActiveSection('intelligence')}
+          className={`px-2 py-1 rounded transition-colors flex items-center gap-1 cursor-pointer ${
+            activeSection === 'intelligence'
+              ? 'bg-[#27272a] text-white font-medium'
+              : 'text-zinc-400 hover:text-zinc-200'
+          }`}
+        >
+          <Workflow className="w-3 h-3 text-cyan-400" />
+          Intelligence
+        </button>
+        {span && (
+          <button
+            onClick={() => setActiveSection('fork')}
+            className={`px-2 py-1 rounded transition-colors flex items-center gap-1 cursor-pointer ${
+              activeSection === 'fork'
+                ? 'bg-[#27272a] text-white font-medium'
+                : 'text-zinc-400 hover:text-zinc-200'
+            }`}
+          >
+            <GitFork className="w-3 h-3" />
             Fork IDE
           </button>
         )}
-
         {span && (
           <button
-            onClick={() => setActiveTab('json')}
-            className={`py-2 px-3 border-b-2 font-medium transition-colors flex items-center gap-1.5 ${
-              activeTab === 'json'
-                ? 'border-white text-white'
-                : 'border-transparent text-zinc-400 hover:text-zinc-200'
+            onClick={() => setActiveSection('json')}
+            className={`px-2 py-1 rounded transition-colors flex items-center gap-1 cursor-pointer ${
+              activeSection === 'json'
+                ? 'bg-[#27272a] text-white font-medium'
+                : 'text-zinc-400 hover:text-zinc-200'
             }`}
           >
-            <Code2 className="w-3.5 h-3.5" />
+            <Terminal className="w-3 h-3" />
             JSON
           </button>
         )}
       </div>
 
-      {/* Drawer Content */}
-      <div className="flex-1 overflow-y-auto p-3.5 space-y-3 font-mono text-xs select-text">
-        {/* Live Breakpoint Intercept Box */}
+      {/* 3. UNIFIED SCROLLABLE DOCUMENT BODY */}
+      <div className="flex-1 overflow-y-auto p-3 space-y-3 font-mono text-xs select-text">
+        {/* MULTI-SELECTION SUMMARY BANNER */}
+        {multiSelectSummary && (
+          <div className="p-3 rounded bg-indigo-950/30 border border-indigo-600/50 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-1.5 text-xs font-semibold text-indigo-300 uppercase">
+                <Layers className="w-3.5 h-3.5 text-indigo-400" />
+                Multi-Selection ({multiSelectSummary.count} Spans)
+              </span>
+              {onClearMultiSelection && (
+                <button
+                  onClick={onClearMultiSelection}
+                  className="text-[10px] text-zinc-400 hover:text-white underline font-mono cursor-pointer"
+                >
+                  Clear Selection
+                </button>
+              )}
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-[11px]">
+              <div className="bg-[#09090b] p-2 rounded border border-[#202024]">
+                <span className="text-zinc-400 text-[10px] block">Aggregated Cost</span>
+                <span className="text-white font-mono font-semibold">
+                  ${multiSelectSummary.totalCost.toFixed(5)}
+                </span>
+              </div>
+              <div className="bg-[#09090b] p-2 rounded border border-[#202024]">
+                <span className="text-zinc-400 text-[10px] block">Total Latency</span>
+                <span className="text-white font-mono font-semibold">
+                  {multiSelectSummary.totalLatency}ms
+                </span>
+              </div>
+              <div className="bg-[#09090b] p-2 rounded border border-[#202024]">
+                <span className="text-zinc-400 text-[10px] block">Combined Tokens</span>
+                <span className="text-white font-mono font-semibold">
+                  {multiSelectSummary.totalTokens}
+                </span>
+              </div>
+              <div className="bg-[#09090b] p-2 rounded border border-[#202024]">
+                <span className="text-zinc-400 text-[10px] block">Error Count</span>
+                <span
+                  className={`font-mono font-semibold ${
+                    multiSelectSummary.errorCount > 0 ? 'text-rose-400' : 'text-zinc-400'
+                  }`}
+                >
+                  {multiSelectSummary.errorCount}
+                </span>
+              </div>
+            </div>
+            <div className="pt-1 flex flex-wrap gap-1">
+              {selectedSpans?.map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => onSelectSpan && onSelectSpan(s.id)}
+                  className={`text-[10px] font-mono px-1.5 py-0.5 rounded border transition-colors cursor-pointer ${
+                    s.id === span?.id
+                      ? 'bg-indigo-600 text-white border-indigo-400'
+                      : 'bg-[#18181c] text-zinc-300 border-[#27272a] hover:border-zinc-500'
+                  }`}
+                >
+                  {s.agent_name}:{s.model || s.span_type}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* LIVE BREAKPOINT INTERCEPTION CARD */}
         {isIntercepted && span && (
           <div className="p-3 rounded bg-amber-950/30 border border-amber-600/70 space-y-2.5">
             <div className="flex items-center justify-between">
@@ -497,7 +637,7 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
             </div>
 
             <p className="text-[11px] text-amber-200/90 font-sans leading-relaxed">
-              Execution is suspended. Mutate prompt payload before forwarding, return a synthetic mock ($0.00 cost), or abort.
+              Execution is suspended. Mutate payload JSON before forwarding, return a synthetic mock ($0.00 cost), or abort.
             </p>
 
             {interceptError && (
@@ -507,7 +647,9 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
             )}
 
             <div className="space-y-1">
-              <label className="text-[10px] text-amber-300 uppercase font-semibold">Mutate Payload JSON</label>
+              <label className="text-[10px] text-amber-300 uppercase font-semibold">
+                Mutate Payload JSON
+              </label>
               <textarea
                 rows={4}
                 value={editedPayloadJson}
@@ -517,7 +659,9 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
             </div>
 
             <div className="space-y-1">
-              <label className="text-[10px] text-amber-300 uppercase font-semibold">Mock Response ($0.00)</label>
+              <label className="text-[10px] text-amber-300 uppercase font-semibold">
+                Mock Response ($0.00)
+              </label>
               <Input
                 placeholder="Synthetic completion text..."
                 value={mockResponseText}
@@ -558,173 +702,231 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
           </div>
         )}
 
-        {/* TAB 1: OVERVIEW */}
-        {activeTab === 'inspector' && span && (
-          <>
-            {/* Multi-Selection Summary Card */}
-            {multiSelectSummary && (
-              <div className="p-3 rounded bg-indigo-950/30 border border-indigo-600/50 space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <span className="flex items-center gap-1.5 text-xs font-semibold text-indigo-300 uppercase">
-                    <Layers className="w-3.5 h-3.5 text-indigo-400" />
-                    Multi-Selection ({multiSelectSummary.count} Spans)
+        {/* PRIMARY METRIC STRIP (High-density 4-tile grid) */}
+        {span && (activeSection === 'all' || activeSection === 'payload') && (
+          <div className="grid grid-cols-2 gap-2">
+            <div className="p-2.5 rounded bg-[#111114] border border-[#27272a] space-y-0.5">
+              <span className="text-[10px] text-zinc-400 uppercase font-sans flex items-center gap-1">
+                <Clock className="w-3 h-3 text-zinc-400" />
+                Duration
+              </span>
+              <div className="text-sm font-semibold text-zinc-100">
+                {span.cache_hit === 1 ? '0ms (cache)' : `${span.latency_ms}ms`}
+              </div>
+            </div>
+
+            <div className="p-2.5 rounded bg-[#111114] border border-[#27272a] space-y-0.5">
+              <span className="text-[10px] text-zinc-400 uppercase font-sans flex items-center gap-1">
+                <DollarSign className="w-3 h-3 text-zinc-400" />
+                Cost USD
+              </span>
+              <div className="text-sm font-semibold text-zinc-100">
+                ${span.cost_usd > 0 ? span.cost_usd.toFixed(6) : '0.000000'}
+              </div>
+            </div>
+
+            {/* Tokens Tile (Only shown if tokens exist to prevent fake zeroes) */}
+            {span.prompt_tokens > 0 || span.completion_tokens > 0 ? (
+              <div className="p-2.5 rounded bg-[#111114] border border-[#27272a] space-y-0.5">
+                <span className="text-[10px] text-zinc-400 uppercase font-sans flex items-center gap-1">
+                  <Cpu className="w-3 h-3 text-zinc-400" />
+                  Tokens
+                </span>
+                <div className="text-xs font-semibold text-zinc-100">
+                  {span.prompt_tokens + span.completion_tokens}
+                  <span className="text-zinc-400 font-normal ml-1 text-[10px]">
+                    ({span.prompt_tokens} in / {span.completion_tokens} out)
                   </span>
-                  {onClearMultiSelection && (
-                    <button
-                      onClick={onClearMultiSelection}
-                      className="text-[10px] text-zinc-400 hover:text-white underline font-mono cursor-pointer"
-                    >
-                      Clear Selection
-                    </button>
-                  )}
                 </div>
-                <div className="grid grid-cols-2 gap-2 text-[11px]">
-                  <div className="bg-[#0c0c0e] p-2 rounded border border-[#202024]">
-                    <span className="text-zinc-500 text-[10px] block">Aggregated Cost</span>
-                    <span className="text-white font-mono font-semibold">${multiSelectSummary.totalCost.toFixed(5)}</span>
-                  </div>
-                  <div className="bg-[#0c0c0e] p-2 rounded border border-[#202024]">
-                    <span className="text-zinc-500 text-[10px] block">Total Latency</span>
-                    <span className="text-white font-mono font-semibold">{multiSelectSummary.totalLatency}ms</span>
-                  </div>
-                  <div className="bg-[#0c0c0e] p-2 rounded border border-[#202024]">
-                    <span className="text-zinc-500 text-[10px] block">Combined Tokens</span>
-                    <span className="text-white font-mono font-semibold">{multiSelectSummary.totalTokens}</span>
-                  </div>
-                  <div className="bg-[#0c0c0e] p-2 rounded border border-[#202024]">
-                    <span className="text-zinc-500 text-[10px] block">Error Count</span>
-                    <span className={`font-mono font-semibold ${multiSelectSummary.errorCount > 0 ? 'text-rose-400' : 'text-zinc-400'}`}>
-                      {multiSelectSummary.errorCount}
-                    </span>
-                  </div>
+              </div>
+            ) : (
+              <div className="p-2.5 rounded bg-[#111114] border border-[#27272a] space-y-0.5">
+                <span className="text-[10px] text-zinc-400 uppercase font-sans flex items-center gap-1">
+                  <Terminal className="w-3 h-3 text-zinc-400" />
+                  Type
+                </span>
+                <div className="text-xs font-semibold text-zinc-100 uppercase">
+                  {span.span_type}
                 </div>
-                <div className="pt-1 flex flex-wrap gap-1">
-                  {selectedSpans?.map((s) => (
-                    <button
-                      key={s.id}
-                      onClick={() => onSelectSpan && onSelectSpan(s.id)}
-                      className={`text-[10px] font-mono px-1.5 py-0.5 rounded border transition-colors cursor-pointer ${
-                        s.id === span?.id
-                          ? 'bg-indigo-600 text-white border-indigo-400'
-                          : 'bg-[#18181c] text-zinc-300 border-[#2c2c32] hover:border-zinc-500'
-                      }`}
+              </div>
+            )}
+
+            <div className="p-2.5 rounded bg-[#111114] border border-[#27272a] space-y-0.5">
+              <span className="text-[10px] text-zinc-400 uppercase font-sans flex items-center gap-1">
+                <Sparkles className="w-3 h-3 text-zinc-400" />
+                Origin / Status
+              </span>
+              <div className="text-xs font-semibold text-zinc-100 capitalize">
+                {span.execution_origin || (isError ? 'Failed' : 'Success')}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* CRITICAL PATH NOTIFICATION STRIP */}
+        {currentCriticalPathSpan && (activeSection === 'all' || activeSection === 'intelligence') && (
+          <div className="p-2.5 rounded bg-amber-950/20 border border-amber-500/40 flex items-center justify-between text-xs">
+            <span className="flex items-center gap-1.5 text-amber-300 font-semibold">
+              <Zap className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+              Critical Path Bottleneck
+            </span>
+            <span className="text-amber-200/80 font-mono text-[11px]">
+              {currentCriticalPathSpan.durationMs}ms ({currentCriticalPathSpan.percentageOfCriticalPath}% of run)
+            </span>
+          </div>
+        )}
+
+        {/* EXECUTION LINEAGE & METADATA SECTION */}
+        {span && (activeSection === 'all' || activeSection === 'payload') && (
+          <div className="p-2.5 rounded bg-[#111114] border border-[#27272a] space-y-1">
+            <div className="flex items-center justify-between pb-1 border-b border-[#202024]">
+              <span className="text-[10px] text-zinc-400 uppercase font-semibold">
+                Execution Metadata
+              </span>
+              {runProv?.git && (
+                <span className="text-[10px] text-zinc-400 flex items-center gap-1">
+                  <GitBranch className="w-2.5 h-2.5 text-zinc-400" />
+                  {runProv.git.branch || 'main'}
+                </span>
+              )}
+            </div>
+
+            <DataRow label="Agent Name" value={span.agent_name} />
+            <DataRow label="Target Model" value={span.model || '—'} />
+            <DataRow
+              label="Telemetry Source"
+              value={
+                span.id.startsWith('span_otel_') ? (
+                  <span className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                    OpenTelemetry OTLP
+                  </span>
+                ) : span.id.startsWith('span_lc_') ? (
+                  <span className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    LangChain Adapter
+                  </span>
+                ) : span.id.startsWith('span_py_') ? (
+                  <span className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                    Python SDK
+                  </span>
+                ) : (
+                  <span className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                    AetherTrace SDK
+                  </span>
+                )
+              }
+            />
+            <DataRow
+              label="Parent Span"
+              value={
+                span.parent_span_id ? (
+                  <button
+                    onClick={() => onSelectParentSpan && onSelectParentSpan(span.parent_span_id!)}
+                    className="text-zinc-200 hover:text-white flex items-center gap-1 font-mono text-[10px] cursor-pointer"
+                    title="Jump to Parent Span ([)"
+                  >
+                    <span>{span.parent_span_id}</span>
+                    <ArrowUpRight className="w-2.5 h-2.5 text-zinc-400" />
+                  </button>
+                ) : (
+                  'None (Root Invocation)'
+                )
+              }
+            />
+          </div>
+        )}
+
+        {/* EVENT-SPECIFIC PAYLOAD SECTIONS */}
+        {span && (activeSection === 'all' || activeSection === 'payload') && (
+          <div className="space-y-2.5">
+            {/* LLM Prompt Messages Section */}
+            {parsedRequest?.messages && Array.isArray(parsedRequest.messages) && (
+              <div className="p-2.5 rounded bg-[#111114] border border-[#27272a] space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-zinc-400 uppercase font-semibold flex items-center gap-1">
+                    <FileText className="w-3 h-3 text-zinc-400" />
+                    Input Messages ({parsedRequest.messages.length})
+                  </span>
+                </div>
+
+                <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                  {parsedRequest.messages.map((m: any, idx: number) => (
+                    <div
+                      key={idx}
+                      className="p-2 rounded bg-[#09090b] border border-[#202024] space-y-1"
                     >
-                      {s.agent_name}:{s.model || s.span_type}
-                    </button>
+                      <div className="flex items-center justify-between text-[10px]">
+                        <span
+                          className={`font-semibold uppercase px-1.5 py-0.5 rounded text-[9px] ${
+                            m.role === 'system'
+                              ? 'bg-zinc-800 text-zinc-300'
+                              : m.role === 'user'
+                              ? 'bg-blue-950 text-blue-300 border border-blue-800/50'
+                              : 'bg-purple-950 text-purple-300 border border-purple-800/50'
+                          }`}
+                        >
+                          {m.role || 'message'}
+                        </span>
+                        <button
+                          onClick={() =>
+                            handleCopyText(
+                              typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
+                              'prompt',
+                              idx
+                            )
+                          }
+                          className="text-zinc-400 hover:text-white flex items-center gap-1 cursor-pointer"
+                          title="Copy message content"
+                        >
+                          {copiedPromptIdx === idx ? (
+                            <Check className="w-2.5 h-2.5 text-emerald-400" />
+                          ) : (
+                            <Copy className="w-2.5 h-2.5" />
+                          )}
+                        </button>
+                      </div>
+                      <pre className="text-[11px] text-zinc-300 font-mono whitespace-pre-wrap break-all leading-relaxed max-h-24 overflow-y-auto">
+                        {typeof m.content === 'string' ? m.content : JSON.stringify(m.content, null, 2)}
+                      </pre>
+                    </div>
                   ))}
                 </div>
               </div>
             )}
 
-            {/* Critical Path & Intelligence Quick Strip */}
-            {currentCriticalPathSpan && (
-              <div className="p-2.5 rounded bg-amber-950/20 border border-amber-500/40 flex items-center justify-between text-xs">
-                <span className="flex items-center gap-1.5 text-amber-300 font-semibold">
-                  <Zap className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
-                  Critical Path Span
-                </span>
-                <span className="text-amber-200/80 font-mono text-[11px]">
-                  {currentCriticalPathSpan.durationMs}ms ({currentCriticalPathSpan.percentageOfCriticalPath}%)
-                </span>
-              </div>
-            )}
-
-            {/* Run Provenance Banner */}
-            {runProv?.git && (
-              <div className="p-2.5 rounded bg-[#111114] border border-[#2c2c32] space-y-1">
+            {/* LLM Completion Response */}
+            {parsedResponse?.choices?.[0]?.message && (
+              <div className="p-2.5 rounded bg-[#111114] border border-[#27272a] space-y-1.5">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] text-zinc-400 uppercase font-semibold flex items-center gap-1">
-                    <GitBranch className="w-3 h-3 text-zinc-500" />
-                    Git Provenance
+                    <Sparkles className="w-3 h-3 text-zinc-400" />
+                    Completion Output
                   </span>
-                  <Badge variant="status" status={runProv.git.dirty ? 'warning' : 'success'} size="xs">
-                    {runProv.git.dirty ? 'Dirty Tree' : 'Clean Commit'}
-                  </Badge>
+                  <button
+                    onClick={() =>
+                      handleCopyText(
+                        parsedResponse.choices[0].message.content || '',
+                        'response'
+                      )
+                    }
+                    className="text-[10px] text-zinc-400 hover:text-white flex items-center gap-1 cursor-pointer"
+                  >
+                    {copiedResponse ? (
+                      <Check className="w-2.5 h-2.5 text-emerald-400" />
+                    ) : (
+                      <Copy className="w-2.5 h-2.5" />
+                    )}
+                    Copy
+                  </button>
                 </div>
-                <DataRow
-                  label="Commit"
-                  value={`${runProv.git.branch || 'main'}@${runProv.git.short_sha || runProv.git.commit_sha?.slice(0, 7) || 'HEAD'}`}
-                  copyValue={runProv.git.commit_sha}
-                  copyable
-                />
+                <pre className="p-2 rounded bg-[#09090b] border border-[#202024] text-[11px] text-zinc-200 font-mono whitespace-pre-wrap break-all leading-relaxed max-h-48 overflow-y-auto">
+                  {parsedResponse.choices[0].message.content}
+                </pre>
               </div>
             )}
-
-            {/* Technical Metrics Card */}
-            <div className="p-2.5 rounded bg-[#111114] border border-[#2c2c32] space-y-1">
-              <DataRow label="Span Type" value={span.span_type.toUpperCase()} />
-              <DataRow
-                label="Telemetry Source"
-                value={
-                  span.id.startsWith('span_otel_') ? (
-                    <span className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20">
-                      OpenTelemetry OTLP
-                    </span>
-                  ) : span.id.startsWith('span_lc_') ? (
-                    <span className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                      LangChain Adapter
-                    </span>
-                  ) : span.id.startsWith('span_py_') ? (
-                    <span className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                      Python SDK
-                    </span>
-                  ) : (
-                    <span className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                      AetherTrace SDK
-                    </span>
-                  )
-                }
-              />
-              <DataRow label="Agent Name" value={span.agent_name} />
-              <DataRow label="Target Model" value={span.model || '—'} />
-              <DataRow label="Latency" value={span.cache_hit === 1 ? '0ms (cached)' : `${span.latency_ms}ms`} />
-              <DataRow label="Cost USD" value={`$${span.cost_usd > 0 ? span.cost_usd.toFixed(6) : '0.000000'}`} />
-              <DataRow
-                label="Tokens"
-                value={`${span.prompt_tokens + span.completion_tokens} (${span.prompt_tokens} in / ${span.completion_tokens} out)`}
-              />
-              <DataRow
-                label="Parent Span"
-                value={
-                  span.parent_span_id ? (
-                    <button
-                      onClick={() => onSelectParentSpan && onSelectParentSpan(span.parent_span_id!)}
-                      className="text-zinc-200 hover:text-white flex items-center gap-1 font-mono text-[10px] cursor-pointer"
-                      title="Jump to Parent Span ([)"
-                    >
-                      <span>{span.parent_span_id}</span>
-                      <ArrowUpRight className="w-2.5 h-2.5" />
-                    </button>
-                  ) : (
-                    'None (Root)'
-                  )
-                }
-              />
-              {childSpans && childSpans.length > 0 && (
-                <DataRow
-                  label="Child Spans"
-                  value={
-                    <div className="flex flex-wrap gap-1">
-                      {childSpans.map((c) => (
-                        <button
-                          key={c.id}
-                          onClick={() => onSelectSpan && onSelectSpan(c.id)}
-                          className="text-zinc-200 hover:text-white flex items-center gap-1 font-mono text-[10px] bg-[#18181c] border border-[#2c2c32] hover:border-zinc-500 px-1.5 py-0.5 rounded cursor-pointer"
-                          title="Jump to Child Span (])"
-                        >
-                          <span>{c.agent_name}:{c.span_type}</span>
-                          <ChevronRight className="w-2.5 h-2.5 text-zinc-500" />
-                        </button>
-                      ))}
-                    </div>
-                  }
-                />
-              )}
-            </div>
 
             {/* Tool Calls Section */}
             {span.span_type === 'tool_call' && parsedRequest && (
-              <div className="p-2.5 rounded bg-[#111114] border border-[#2c2c32] space-y-2">
+              <div className="p-2.5 rounded bg-[#111114] border border-[#27272a] space-y-2">
                 <div className="flex items-center justify-between text-xs font-semibold text-zinc-200">
                   <span className="flex items-center gap-1.5 text-sky-400">
                     <Wrench className="w-3.5 h-3.5" />
@@ -734,220 +936,173 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
 
                 {parsedRequest.arguments && (
                   <div>
-                    <button
-                      onClick={() => setExpandToolArgs((p) => !p)}
-                      className="text-[10px] text-zinc-400 uppercase font-semibold flex items-center gap-1 hover:text-zinc-200 mb-1"
-                    >
-                      {expandToolArgs ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-                      Input Arguments
-                    </button>
-                    {expandToolArgs && (
-                      <pre className="p-2 rounded bg-black/80 border border-[#202024] text-[11px] text-zinc-300 overflow-x-auto max-h-36">
-                        {JSON.stringify(parsedRequest.arguments, null, 2)}
-                      </pre>
-                    )}
+                    <span className="text-[10px] text-zinc-400 uppercase font-semibold block mb-1">
+                      Arguments
+                    </span>
+                    <pre className="p-2 rounded bg-[#09090b] border border-[#202024] text-[11px] text-zinc-300 overflow-x-auto max-h-36">
+                      {typeof parsedRequest.arguments === 'string'
+                        ? parsedRequest.arguments
+                        : JSON.stringify(parsedRequest.arguments, null, 2)}
+                    </pre>
                   </div>
                 )}
 
                 {parsedResponse && (
                   <div>
-                    <button
-                      onClick={() => setExpandToolResult((p) => !p)}
-                      className="text-[10px] text-zinc-400 uppercase font-semibold flex items-center gap-1 hover:text-zinc-200 mb-1"
-                    >
-                      {expandToolResult ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                    <span className="text-[10px] text-zinc-400 uppercase font-semibold block mb-1">
                       Output Result
-                    </button>
-                    {expandToolResult && (
-                      <pre className="p-2 rounded bg-black/80 border border-[#202024] text-[11px] text-zinc-300 overflow-x-auto max-h-40">
-                        {JSON.stringify(parsedResponse, null, 2)}
-                      </pre>
-                    )}
+                    </span>
+                    <pre className="p-2 rounded bg-[#09090b] border border-[#202024] text-[11px] text-zinc-300 overflow-x-auto max-h-40">
+                      {JSON.stringify(parsedResponse, null, 2)}
+                    </pre>
                   </div>
                 )}
               </div>
             )}
 
-            {/* Request Payload Section */}
-            {parsedRequest?.messages && (
-              <div className="p-2.5 rounded bg-[#111114] border border-[#2c2c32] space-y-1.5">
-                <div className="flex items-center justify-between">
-                  <button
-                    onClick={() => setExpandRequest((p) => !p)}
-                    className="text-[10px] text-zinc-400 uppercase font-semibold flex items-center gap-1 hover:text-zinc-200"
-                  >
-                    {expandRequest ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-                    Input Prompt Messages ({parsedRequest.messages.length})
-                  </button>
+            {/* Error or Guardrail Alert */}
+            {isError && (
+              <div className="p-2.5 rounded bg-rose-950/30 border border-rose-900/60 space-y-1.5">
+                <div className="flex items-center gap-1.5 text-rose-300 font-semibold text-xs">
+                  <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+                  Execution Error / Guardrail Block
                 </div>
-                {expandRequest && (
-                  <pre className="p-2 rounded bg-black/80 border border-[#202024] text-[11px] text-zinc-300 overflow-x-auto max-h-48">
-                    {JSON.stringify(parsedRequest.messages, null, 2)}
-                  </pre>
-                )}
+                <pre className="p-2 rounded bg-[#09090b] border border-rose-900/50 text-[11px] text-rose-200 overflow-x-auto max-h-32">
+                  {span.response_payload || 'Execution terminated with error'}
+                </pre>
               </div>
             )}
-
-            {/* Actions: Replay & Breakpoints */}
-            <div className="pt-2 flex flex-col gap-2">
-              <Button
-                variant="primary"
-                size="md"
-                className="w-full"
-                onClick={handleReplaySpan}
-                disabled={isReplaying}
-                isLoading={isReplaying}
-                icon={<RotateCcw className="w-3.5 h-3.5" />}
-              >
-                Replay From Here ($0.00 Cache Hit)
-              </Button>
-
-              {onToggleAgentBreakpoint && (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className="w-full"
-                  onClick={() => onToggleAgentBreakpoint(span.agent_name)}
-                  icon={<Sliders className="w-3 h-3" />}
-                >
-                  {isAgentBreakpointed ? `Remove Breakpoint on ${span.agent_name}` : `Set Breakpoint on ${span.agent_name}`}
-                </Button>
-              )}
-            </div>
-          </>
+          </div>
         )}
 
-        {/* TAB 2: AGENT INTELLIGENCE */}
-        {activeTab === 'intelligence' && (
-          <div className="space-y-3 font-mono">
+        {/* CHILD SPANS NAVIGATION SECTION */}
+        {childSpans && childSpans.length > 0 && (activeSection === 'all' || activeSection === 'payload') && (
+          <div className="p-2.5 rounded bg-[#111114] border border-[#27272a] space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-zinc-400 uppercase font-semibold flex items-center gap-1">
+                <ListTree className="w-3 h-3 text-zinc-400" />
+                Child Spans ({childSpans.length})
+              </span>
+              <span className="text-[9px] text-zinc-400">Click to focus (])</span>
+            </div>
+
+            <div className="space-y-1 max-h-40 overflow-y-auto pr-1">
+              {childSpans.map((child) => (
+                <button
+                  key={child.id}
+                  onClick={() => onSelectSpan && onSelectSpan(child.id)}
+                  className="w-full p-1.5 rounded bg-[#16161a] hover:bg-[#202024] border border-[#202024] hover:border-zinc-500 flex items-center justify-between text-left transition-colors cursor-pointer"
+                >
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                        child.span_type === 'guardrail_block' ? 'bg-rose-500' : 'bg-emerald-400'
+                      }`}
+                    />
+                    <span className="text-[11px] font-semibold text-zinc-200 truncate">
+                      {child.agent_name}
+                    </span>
+                    <span className="text-[10px] text-zinc-400 font-mono truncate">
+                      {child.model || child.span_type}
+                    </span>
+                  </div>
+                  <div className="text-[10px] font-mono text-zinc-400 shrink-0 pl-1">
+                    {child.latency_ms}ms
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* INTELLIGENCE & CAUSAL CONTEXT SECTION */}
+        {(activeSection === 'all' || activeSection === 'intelligence') && (
+          <div className="space-y-2.5">
             {/* Agent Summary Card */}
             {currentAgentSummary && (
-              <div className="p-3 rounded bg-[#111114] border border-[#2c2c32] space-y-2">
+              <div className="p-2.5 rounded bg-[#111114] border border-[#27272a] space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="flex items-center gap-1.5 text-xs font-semibold text-zinc-100">
                     <Workflow className="w-3.5 h-3.5 text-cyan-400" />
                     Agent: {currentAgentSummary.agentName}
                   </span>
-                  <Badge variant="status" status={currentAgentSummary.status === 'failed' ? 'error' : 'success'} size="xs">
+                  <Badge
+                    variant="status"
+                    status={currentAgentSummary.status === 'failed' ? 'error' : 'success'}
+                    size="xs"
+                  >
                     {currentAgentSummary.status.toUpperCase()}
                   </Badge>
                 </div>
 
                 <div className="grid grid-cols-2 gap-1 text-[11px]">
                   <DataRow label="Depth" value={`Level ${currentAgentSummary.depth}`} />
-                  <DataRow label="Parent Agent" value={currentAgentSummary.parentAgentName || 'Root'} />
-                  <DataRow label="Duration" value={`${(currentAgentSummary.durationMs / 1000).toFixed(2)}s`} />
-                  <DataRow label="Total Spans" value={currentAgentSummary.spanCount} />
-                  <DataRow label="LLM Inferences" value={currentAgentSummary.llmCallCount} />
-                  <DataRow label="Tool Invocations" value={currentAgentSummary.toolCallCount} />
-                  <DataRow label="Retry Attempts" value={currentAgentSummary.retryCount} />
+                  <DataRow label="Parent" value={currentAgentSummary.parentAgentName || 'Root'} />
+                  <DataRow
+                    label="Duration"
+                    value={`${(currentAgentSummary.durationMs / 1000).toFixed(2)}s`}
+                  />
+                  <DataRow label="Spans" value={currentAgentSummary.spanCount} />
+                  <DataRow label="LLM Calls" value={currentAgentSummary.llmCallCount} />
+                  <DataRow label="Tool Calls" value={currentAgentSummary.toolCallCount} />
+                  <DataRow label="Retries" value={currentAgentSummary.retryCount} />
                   <DataRow label="Errors" value={currentAgentSummary.errorCount} />
-                  <DataRow label="Cost USD" value={`$${currentAgentSummary.totalCostUsd.toFixed(6)}`} />
+                  <DataRow
+                    label="Cost USD"
+                    value={`$${currentAgentSummary.totalCostUsd.toFixed(6)}`}
+                  />
                   <DataRow label="Tokens" value={currentAgentSummary.totalTokens} />
                 </div>
               </div>
             )}
 
-            {/* Critical Path Sequence */}
-            {intelligence?.criticalPath && (
-              <div className="p-3 rounded bg-[#111114] border border-[#2c2c32] space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="flex items-center gap-1.5 text-xs font-semibold text-amber-300">
-                    <Zap className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
-                    Critical Path Analysis
-                  </span>
-                  <Badge variant="status" status="warning" size="xs">
-                    {intelligence.criticalPath.coveragePercentage}% of Run
-                  </Badge>
-                </div>
-
-                <div className="text-[11px] text-zinc-400 space-y-1">
-                  <div className="flex justify-between">
-                    <span>Critical Path Duration:</span>
-                    <span className="text-zinc-200 font-semibold">{intelligence.criticalPath.durationMs}ms</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Run Wall-Clock Time:</span>
-                    <span className="text-zinc-200">{intelligence.criticalPath.runDurationMs}ms</span>
-                  </div>
-                  {intelligence.criticalPath.longestSpan && (
-                    <div className="flex justify-between">
-                      <span>Longest Bottleneck:</span>
-                      <span className="text-amber-200 font-semibold">
-                        {intelligence.criticalPath.longestSpan.agentName} ({intelligence.criticalPath.longestSpan.durationMs}ms)
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Critical Path Steps */}
-                <div className="pt-1 space-y-1 border-t border-[#202024]">
-                  <span className="text-[10px] text-zinc-500 uppercase font-semibold">Sequence:</span>
-                  <div className="space-y-1 max-h-36 overflow-y-auto">
-                    {intelligence.criticalPath.spans.map((cp, idx) => (
-                      <div
-                        key={cp.spanId}
-                        onClick={() => onSelectSpan && onSelectSpan(cp.spanId)}
-                        className={`p-1.5 rounded flex items-center justify-between text-[11px] cursor-pointer transition-colors ${
-                          span?.id === cp.spanId
-                            ? 'bg-amber-950/40 border border-amber-600/50 text-amber-200'
-                            : 'bg-[#18181c] hover:bg-[#202024] text-zinc-300'
-                        }`}
-                      >
-                        <span className="truncate max-w-[240px]">
-                          {idx + 1}. {cp.agentName}: {cp.label}
-                        </span>
-                        <span className="font-mono text-[10px] text-zinc-400 shrink-0">
-                          {cp.durationMs}ms ({cp.percentageOfCriticalPath}%)
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Causal Context for Current Span */}
-            {span && (
-              <div className="p-3 rounded bg-[#111114] border border-[#2c2c32] space-y-2">
+            {/* Causal Relations for Active Span */}
+            {span && (causedByRelations.length > 0 || causedRelations.length > 0) && (
+              <div className="p-2.5 rounded bg-[#111114] border border-[#27272a] space-y-2">
                 <span className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
                   <GitMerge className="w-3.5 h-3.5 text-zinc-400" />
-                  Causal Context for Current Span
+                  Causal Reasoning Context
                 </span>
 
-                {causedByRelations.length > 0 ? (
+                {causedByRelations.length > 0 && (
                   <div className="space-y-1">
-                    <span className="text-[10px] text-zinc-500 uppercase font-semibold">Caused by:</span>
+                    <span className="text-[10px] text-zinc-400 uppercase font-semibold">
+                      Caused by:
+                    </span>
                     {causedByRelations.map((r, idx) => (
                       <div
                         key={idx}
                         onClick={() => onSelectSpan && onSelectSpan(r.sourceSpanId)}
-                        className="p-1.5 rounded bg-[#18181c] hover:bg-[#202024] text-[11px] cursor-pointer space-y-0.5"
+                        className="p-1.5 rounded bg-[#16161a] hover:bg-[#202024] text-[11px] cursor-pointer space-y-0.5 border border-[#202024]"
                       >
                         <div className="flex items-center justify-between">
                           <span className="text-zinc-200 font-semibold">{r.relationType}</span>
-                          <Badge variant="neutral" size="xs">{r.classification}</Badge>
+                          <Badge variant="neutral" size="xs">
+                            {r.classification}
+                          </Badge>
                         </div>
                         <p className="text-[10px] text-zinc-400 font-sans">{r.explanation}</p>
                       </div>
                     ))}
                   </div>
-                ) : (
-                  <p className="text-[11px] text-zinc-500 italic">No incoming causal dependencies (root execution).</p>
                 )}
 
                 {causedRelations.length > 0 && (
                   <div className="space-y-1 pt-1 border-t border-[#202024]">
-                    <span className="text-[10px] text-zinc-500 uppercase font-semibold">Triggered Downstream:</span>
+                    <span className="text-[10px] text-zinc-400 uppercase font-semibold">
+                      Triggered Downstream:
+                    </span>
                     {causedRelations.map((r, idx) => (
                       <div
                         key={idx}
                         onClick={() => onSelectSpan && onSelectSpan(r.targetSpanId)}
-                        className="p-1.5 rounded bg-[#18181c] hover:bg-[#202024] text-[11px] cursor-pointer space-y-0.5"
+                        className="p-1.5 rounded bg-[#16161a] hover:bg-[#202024] text-[11px] cursor-pointer space-y-0.5 border border-[#202024]"
                       >
                         <div className="flex items-center justify-between">
                           <span className="text-zinc-200 font-semibold">{r.relationType}</span>
-                          <Badge variant="neutral" size="xs">{r.classification}</Badge>
+                          <Badge variant="neutral" size="xs">
+                            {r.classification}
+                          </Badge>
                         </div>
                         <p className="text-[10px] text-zinc-400 font-sans">{r.explanation}</p>
                       </div>
@@ -957,9 +1112,9 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
               </div>
             )}
 
-            {/* Parallel Group Summary (if active in branch) */}
+            {/* Parallel Group Summary (if active) */}
             {currentParallelGroup && (
-              <div className="p-3 rounded bg-[#111114] border border-[#2c2c32] space-y-1.5">
+              <div className="p-2.5 rounded bg-[#111114] border border-[#27272a] space-y-1.5">
                 <span className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
                   <Share2 className="w-3.5 h-3.5 text-cyan-400" />
                   Parallel Execution Group
@@ -967,14 +1122,12 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
                 <DataRow label="Branches" value={currentParallelGroup.branchCount} />
                 <DataRow label="Total Spans" value={currentParallelGroup.totalSpanCount} />
                 <DataRow label="Wall Time" value={`${currentParallelGroup.wallClockDurationMs}ms`} />
-                <DataRow label="Longest Branch" value={`${currentParallelGroup.longestBranchDurationMs}ms`} />
-                <DataRow label="Shortest Branch" value={`${currentParallelGroup.shortestBranchDurationMs}ms`} />
               </div>
             )}
 
             {/* Retry Chain Details (if active) */}
             {currentRetryChain && (
-              <div className="p-3 rounded bg-[#111114] border border-[#2c2c32] space-y-1.5">
+              <div className="p-2.5 rounded bg-[#111114] border border-[#27272a] space-y-1.5">
                 <span className="text-xs font-semibold text-amber-300 flex items-center gap-1.5">
                   <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
                   Retry Chain ({currentRetryChain.retryCount} retries)
@@ -982,48 +1135,30 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
                 <DataRow label="Operation" value={currentRetryChain.operationName} />
                 <DataRow label="Failed Attempts" value={currentRetryChain.failedAttemptsCount} />
                 <DataRow label="Outcome" value={currentRetryChain.finalStatus.toUpperCase()} />
-                <DataRow label="Total Retry Time" value={`${currentRetryChain.totalRetryDurationMs}ms`} />
-                <DataRow label="Total Retry Cost" value={`$${currentRetryChain.totalRetryCostUsd.toFixed(6)}`} />
-              </div>
-            )}
-
-            {/* Failure Hotspots */}
-            {intelligence?.failureHotspots && intelligence.failureHotspots.totalErrors > 0 && (
-              <div className="p-3 rounded bg-red-950/20 border border-red-900/40 space-y-1.5">
-                <span className="text-xs font-semibold text-red-300 flex items-center gap-1.5">
-                  <AlertTriangle className="w-3.5 h-3.5 text-red-400" />
-                  Failure Hotspots
-                </span>
-                <DataRow label="Total Errors" value={intelligence.failureHotspots.totalErrors} />
-                {intelligence.failureHotspots.mostFailedTool && (
-                  <DataRow label="Most Failed Tool" value={intelligence.failureHotspots.mostFailedTool} />
-                )}
-                {intelligence.failureHotspots.mostRetriedOperation && (
-                  <DataRow label="Most Retried" value={intelligence.failureHotspots.mostRetriedOperation} />
-                )}
               </div>
             )}
           </div>
         )}
 
-        {/* TAB 3: FORK IDE */}
-        {activeTab === 'fork' && span && (
-          <div className="space-y-3 font-mono">
-            <div className="p-2.5 rounded bg-[#111114] border border-[#2c2c32] text-xs text-zinc-300 leading-relaxed font-sans">
-              <span className="font-semibold text-white block mb-0.5 flex items-center gap-1 font-mono">
+        {/* FORK & BRANCH STUDIO SECTION */}
+        {span && (activeSection === 'all' || activeSection === 'fork') && (
+          <div className="p-2.5 rounded bg-[#111114] border border-[#27272a] space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-zinc-100 flex items-center gap-1.5">
                 <GitFork className="w-3.5 h-3.5 text-zinc-300" />
-                Time-Travel Fork
+                Time-Travel Fork Studio
               </span>
-              Branch execution from this point. Preceding DAG nodes are replayed from cache with <strong>$0.00</strong> spend.
+              <span className="text-[10px] text-emerald-400 font-mono">
+                $0.00 cached replay
+              </span>
             </div>
 
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="text-[10px] text-zinc-400 uppercase block mb-1">Target Model</label>
-                <Select
-                  value={forkModel}
-                  onChange={(e) => setForkModel(e.target.value)}
-                >
+                <label className="text-[10px] text-zinc-400 uppercase block mb-1">
+                  Target Model
+                </label>
+                <Select value={forkModel} onChange={(e) => setForkModel(e.target.value)}>
                   <option value="gpt-4o">gpt-4o</option>
                   <option value="gpt-4o-mini">gpt-4o-mini</option>
                   <option value="claude-3-5-sonnet-20241022">claude-3-5-sonnet</option>
@@ -1032,27 +1167,26 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
               </div>
 
               <div>
-                <label className="text-[10px] text-zinc-400 uppercase block mb-1">Agent Name</label>
-                <Input
-                  value={forkAgentName}
-                  onChange={(e) => setForkAgentName(e.target.value)}
-                />
+                <label className="text-[10px] text-zinc-400 uppercase block mb-1">
+                  Agent Name
+                </label>
+                <Input value={forkAgentName} onChange={(e) => setForkAgentName(e.target.value)} />
               </div>
             </div>
 
             <div className="space-y-1">
               <label className="text-[10px] text-zinc-400 uppercase font-semibold flex items-center justify-between">
-                <span>Prompt / Messages JSON</span>
-                <span className="text-zinc-500 font-normal">Array of &#123; role, content &#125;</span>
+                <span>Prompt Messages JSON</span>
+                <span className="text-zinc-400 font-normal">Array of &#123; role, content &#125;</span>
               </label>
               <textarea
-                rows={9}
+                rows={5}
                 value={forkMessagesJson}
                 onChange={(e) => setForkMessagesJson(e.target.value)}
                 className="w-full bg-[#09090b] border border-[#202024] rounded p-2 text-[11px] text-zinc-200 font-mono focus:outline-none focus:border-zinc-500 leading-relaxed resize-none"
               />
               {forkJsonError && (
-                <p className="text-[11px] text-rose-300 bg-rose-950/40 border border-rose-900 p-2 rounded">
+                <p className="text-[11px] text-rose-300 bg-rose-950/40 border border-rose-900 p-1.5 rounded">
                   {forkJsonError}
                 </p>
               )}
@@ -1060,7 +1194,7 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
 
             <Button
               variant="primary"
-              size="md"
+              size="sm"
               className="w-full"
               disabled={isForking}
               isLoading={isForking}
@@ -1072,24 +1206,57 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
           </div>
         )}
 
-        {/* TAB 4: JSON */}
-        {activeTab === 'json' && span && (
-          <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] text-zinc-400 uppercase font-semibold">Raw Span Object</span>
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(JSON.stringify(span, null, 2));
-                  setCopiedResponse(true);
-                  setTimeout(() => setCopiedResponse(false), 2000);
-                }}
-                className="text-[10px] text-zinc-400 hover:text-white flex items-center gap-1"
+        {/* PRIMARY ACTIONS: REPLAY & AGENT BREAKPOINTS */}
+        {span && (activeSection === 'all' || activeSection === 'payload') && (
+          <div className="pt-1 flex flex-col gap-2">
+            <Button
+              variant="primary"
+              size="md"
+              className="w-full"
+              onClick={handleReplaySpan}
+              disabled={isReplaying}
+              isLoading={isReplaying}
+              icon={<RotateCcw className="w-3.5 h-3.5" />}
+            >
+              Replay From Here ($0.00 Cache Hit)
+            </Button>
+
+            {onToggleAgentBreakpoint && (
+              <Button
+                variant="secondary"
+                size="sm"
+                className="w-full"
+                onClick={() => onToggleAgentBreakpoint(span.agent_name)}
+                icon={<Sliders className="w-3 h-3" />}
               >
-                {copiedResponse ? <Check className="w-3 h-3 text-white" /> : <Copy className="w-3 h-3" />}
+                {isAgentBreakpointed
+                  ? `Remove Breakpoint on ${span.agent_name}`
+                  : `Set Breakpoint on ${span.agent_name}`}
+              </Button>
+            )}
+          </div>
+        )}
+
+        {/* RAW JSON SECTION */}
+        {span && (activeSection === 'all' || activeSection === 'json') && (
+          <div className="p-2.5 rounded bg-[#111114] border border-[#27272a] space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] text-zinc-400 uppercase font-semibold">
+                Raw Span Object
+              </span>
+              <button
+                onClick={() => handleCopyText(JSON.stringify(span, null, 2), 'json')}
+                className="text-[10px] text-zinc-400 hover:text-white flex items-center gap-1 cursor-pointer"
+              >
+                {copiedJson ? (
+                  <Check className="w-3 h-3 text-emerald-400" />
+                ) : (
+                  <Copy className="w-3 h-3" />
+                )}
                 Copy JSON
               </button>
             </div>
-            <pre className="p-2.5 rounded bg-[#09090b] border border-[#202024] text-[11px] text-zinc-300 overflow-x-auto max-h-[500px] leading-relaxed">
+            <pre className="p-2 rounded bg-[#09090b] border border-[#202024] text-[11px] text-zinc-300 overflow-x-auto max-h-56 leading-relaxed">
               {JSON.stringify(span, null, 2)}
             </pre>
           </div>

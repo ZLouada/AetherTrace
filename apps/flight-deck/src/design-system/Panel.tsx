@@ -50,7 +50,7 @@ export const PanelHeader: React.FC<PanelHeaderProps> = ({
       {children || (
         <>
           <div className="flex flex-col min-w-0 pr-2">
-            {title && <span className="text-xs font-mono font-semibold text-zinc-100 truncate">{title}</span>}
+            {title && <span className="text-xs font-sans font-semibold text-zinc-100 truncate">{title}</span>}
             {subtitle && <span className="text-[10px] font-mono text-zinc-400 truncate">{subtitle}</span>}
           </div>
           {action && <div className="flex items-center gap-1.5 shrink-0">{action}</div>}

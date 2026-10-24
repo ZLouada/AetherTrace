@@ -32,4 +32,5 @@ export * from './Divider';
 export * from './DataRow';
 export * from './EmptyState';
 export * from './LoadingState';
+export * from './ErrorState';
 export * from './Tooltip';

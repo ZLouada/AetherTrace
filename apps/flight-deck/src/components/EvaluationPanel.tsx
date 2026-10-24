@@ -17,7 +17,8 @@ import {
   Layers,
   ChevronRight,
   Filter,
-  Trash2
+  Trash2,
+  ArrowLeft
 } from 'lucide-react';
 import {
   Modal,
@@ -51,6 +52,7 @@ interface EvaluationPanelProps {
   runs: TraceRun[];
   onSelectSpan?: (spanId: string) => void;
   onOpenDiffModal?: (baseId: string, targetId: string) => void;
+  embedded?: boolean;
 }
 
 export const EvaluationPanel: React.FC<EvaluationPanelProps> = ({
@@ -59,7 +61,8 @@ export const EvaluationPanel: React.FC<EvaluationPanelProps> = ({
   selectedRun,
   runs,
   onSelectSpan,
-  onOpenDiffModal
+  onOpenDiffModal,
+  embedded = false
 }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'assertions' | 'root_cause' | 'optimization' | 'history'>('overview');
   const [report, setReport] = useState<EvaluationReport | null>(null);
@@ -169,25 +172,9 @@ export const EvaluationPanel: React.FC<EvaluationPanelProps> = ({
     return true;
   }) || [];
 
-  return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      title={
-        <div className="flex items-center gap-2.5">
-          <Target className="w-4 h-4 text-emerald-400" />
-          <span className="font-semibold text-sm text-zinc-100">Evaluation & Optimization Studio</span>
-          {selectedRun && (
-            <Badge variant="neutral" size="xs">
-              {selectedRun.name}
-            </Badge>
-          )}
-        </div>
-      }
-      maxWidth="5xl"
-    >
-      <div className="flex flex-col h-[700px] -m-6 bg-[#0c0c0e] text-zinc-200">
-        {/* Subheader Navigation Bar */}
+  const contentBody = (
+    <div className={`flex flex-col ${embedded ? 'flex-1 h-full' : 'h-[80vh] w-full'} bg-[#0c0c0e] text-zinc-200 overflow-hidden`}>
+      {/* Subheader Navigation Bar */}
         <div className="flex items-center justify-between px-6 py-2.5 border-b border-[#202024] bg-[#121215] shrink-0">
           <div className="flex items-center gap-1.5">
             <button
@@ -211,7 +198,7 @@ export const EvaluationPanel: React.FC<EvaluationPanelProps> = ({
               Assertions
               {report && (
                 <span
-                  className={`px-1.5 py-0.2 rounded text-[10px] font-mono ${
+                  className={`px-1.5 py-0.5 rounded text-[10px] font-mono ${
                     report.score.assertionsFailed === 0
                       ? 'bg-emerald-950 text-emerald-400 border border-emerald-800/40'
                       : 'bg-rose-950 text-rose-400 border border-rose-800/40'
@@ -244,7 +231,7 @@ export const EvaluationPanel: React.FC<EvaluationPanelProps> = ({
             >
               Optimization Signals
               {report && report.optimizationSignals.length > 0 && (
-                <span className="px-1.5 py-0.2 rounded text-[10px] bg-amber-950 text-amber-300 border border-amber-800/40">
+                <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-950 text-amber-300 border border-amber-800/40">
                   {report.optimizationSignals.length}
                 </span>
               )}
@@ -474,12 +461,12 @@ export const EvaluationPanel: React.FC<EvaluationPanelProps> = ({
           <div className="flex-1 overflow-y-auto p-6 space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-[#202024]">
               <div className="flex items-center gap-2">
-                <Filter className="w-3.5 h-3.5 text-zinc-500" />
+                <Filter className="w-3.5 h-3.5 text-zinc-400" />
                 <span className="text-xs font-medium text-zinc-400">Filter Assertions:</span>
                 <button
                   onClick={() => setAssertionFilter('all')}
                   className={`px-2.5 py-1 rounded text-xs font-medium ${
-                    assertionFilter === 'all' ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-zinc-300'
+                    assertionFilter === 'all' ? 'bg-zinc-800 text-white' : 'text-zinc-400 hover:text-zinc-200'
                   }`}
                 >
                   All ({report?.assertions.length || 0})
@@ -487,7 +474,7 @@ export const EvaluationPanel: React.FC<EvaluationPanelProps> = ({
                 <button
                   onClick={() => setAssertionFilter('passed')}
                   className={`px-2.5 py-1 rounded text-xs font-medium ${
-                    assertionFilter === 'passed' ? 'bg-emerald-950 text-emerald-400' : 'text-zinc-500 hover:text-zinc-300'
+                    assertionFilter === 'passed' ? 'bg-emerald-950 text-emerald-400' : 'text-zinc-400 hover:text-zinc-200'
                   }`}
                 >
                   Passed ({report?.score.assertionsPassed || 0})
@@ -495,7 +482,7 @@ export const EvaluationPanel: React.FC<EvaluationPanelProps> = ({
                 <button
                   onClick={() => setAssertionFilter('failed')}
                   className={`px-2.5 py-1 rounded text-xs font-medium ${
-                    assertionFilter === 'failed' ? 'bg-rose-950 text-rose-400' : 'text-zinc-500 hover:text-zinc-300'
+                    assertionFilter === 'failed' ? 'bg-rose-950 text-rose-400' : 'text-zinc-400 hover:text-zinc-200'
                   }`}
                 >
                   Failed ({report?.score.assertionsFailed || 0})
@@ -504,7 +491,7 @@ export const EvaluationPanel: React.FC<EvaluationPanelProps> = ({
             </div>
 
             {filteredAssertions.length === 0 ? (
-              <div className="py-12 text-center text-xs text-zinc-500">No assertions matching filter.</div>
+              <div className="py-12 text-center text-xs text-zinc-400">No assertions matching filter.</div>
             ) : (
               <div className="space-y-2">
                 {filteredAssertions.map((a) => {
@@ -545,7 +532,7 @@ export const EvaluationPanel: React.FC<EvaluationPanelProps> = ({
 
                       {!passed && a.evidence?.spanIds && a.evidence.spanIds.length > 0 && (
                         <div className="mt-2 pt-2 border-t border-rose-900/30 flex items-center gap-2 text-xs">
-                          <span className="text-zinc-500 font-mono text-[11px]">Culprit Spans:</span>
+                          <span className="text-zinc-400 font-mono text-[11px]">Culprit Spans:</span>
                           <div className="flex items-center gap-1.5 flex-wrap">
                             {a.evidence.spanIds.map((sId) => (
                               <button
@@ -723,7 +710,7 @@ export const EvaluationPanel: React.FC<EvaluationPanelProps> = ({
           <div className="flex-1 overflow-y-auto p-6 space-y-3">
             <h3 className="text-sm font-semibold text-white mb-2">Historical Evaluations</h3>
             {historyList.length === 0 ? (
-              <div className="py-12 text-center text-xs text-zinc-500">No evaluations recorded yet.</div>
+              <div className="py-12 text-center text-xs text-zinc-400">No evaluations recorded yet.</div>
             ) : (
               <div className="space-y-2">
                 {historyList.map((h) => (
@@ -777,6 +764,81 @@ export const EvaluationPanel: React.FC<EvaluationPanelProps> = ({
           </div>
         )}
       </div>
+  );
+
+  if (embedded) {
+    return (
+      <div className="flex flex-col h-full w-full bg-[#09090b] text-zinc-100 font-sans text-xs overflow-hidden">
+        {/* Studio Workspace Header */}
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#202024] bg-[#09090b] shrink-0 font-mono">
+          <div className="flex items-center gap-3">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={onClose}
+              icon={<ArrowLeft className="w-3.5 h-3.5" />}
+              title="Return to Debugger workspace (Esc)"
+            >
+              Back to Debugger
+            </Button>
+            <div className="h-4 w-[1px] bg-[#27272a]" />
+            <div className="flex items-center gap-2">
+              <Target className="w-4 h-4 text-[#ea580c]" />
+              <span className="font-semibold text-sm text-zinc-100 uppercase tracking-wide">
+                Evaluation Studio
+              </span>
+              <Badge variant="neutral" size="xs">
+                ASSERTION RUNNER
+              </Badge>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 font-mono text-xs">
+            {selectedRun && (
+              <span className="text-zinc-400 text-[11px] hidden sm:inline">
+                Target: {selectedRun.name} ({selectedRun.id.slice(0, 8)})
+              </span>
+            )}
+            {report && (
+              <Badge
+                variant="status"
+                status={report.status === 'passed' ? 'completed' : 'failed'}
+                size="xs"
+              >
+                {report.status.toUpperCase()} ({report.score.assertionsPassed}/{report.score.assertionsTotal})
+              </Badge>
+            )}
+            <Badge variant="outline" size="xs">
+              ESC TO EXIT
+            </Badge>
+          </div>
+        </div>
+        {contentBody}
+      </div>
+    );
+  }
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={
+        <div className="flex items-center gap-2 font-mono">
+          <Target className="w-4 h-4 text-[#ea580c]" />
+          <span>Evaluation & Optimization Studio</span>
+          <Badge variant="neutral" size="xs">ASSERTION RUNNER</Badge>
+          {selectedRun && (
+            <Badge variant="neutral" size="xs">
+              {selectedRun.name}
+            </Badge>
+          )}
+        </div>
+      }
+      subtitle="Deterministic assertions, root cause analysis, and optimization signals"
+      maxWidth="5xl"
+    >
+      {contentBody}
     </Modal>
   );
 };
+

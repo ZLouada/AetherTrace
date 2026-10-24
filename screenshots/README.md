@@ -1,59 +1,60 @@
-# AetherTrace — UI & Feature Screenshots Gallery
+# AetherTrace v0.3.0 — UI & Feature Screenshots Gallery
 
-This directory contains high-fidelity visual captures of the core user interfaces, debugging canvases, and diagnostic tooling in **AetherTrace v0.2.0** ("Wireshark for AI Agents").
+This directory contains high-fidelity visual captures of the core user interfaces, debugging canvases, and diagnostic workspaces in **AetherTrace v0.3.0** ("Wireshark for AI Agents").
 
-All captures are generated in Retina 2x resolution (1920×1080) against live local execution traces.
+All captures are generated in Retina 2x resolution (1920×1080) against live local execution traces with zero mock UI artifacts.
 
 ---
 
-## 1. Execution DAG & Flight Deck UI
+## 1. Execution DAG & Workspace Shell 2.0
 > **File:** `01_execution_dag.png`
 
-The central telemetry Flight Deck interface. Displays an interactive execution DAG canvas powered by `@xyflow/react` and Dagre layout, complete with live top-bar metrics (Run Latency, Execution Cost in USD, Total Token Counts, LLM & Tool call counters), an interactive bottom-right MiniMap, quick-filter pills (Pinned, Agents, LLMs, Tools, Retries, Errors, Critical Path), and a left sidebar listing historical and live runs.
+The central telemetry Flight Deck workstation. Powered by `@xyflow/react` and a decoupled Dagre layout engine, featuring the compact Application Rail, consolidated TopBar, persistent resizable Run Sidebar, interactive MiniMap, quick-filter chips (Pinned, Agents, LLMs, Tools, Retries, Errors, Critical Path), and dual-density execution nodes.
 
 ![Execution DAG Canvas](01_execution_dag.png)
 
 ### Key Capabilities:
-- **Hierarchical Node Topology:** Visualizes root agent orchestrations, sub-agents, LLM inference calls, tool executions, and retry cascades.
-- **Interactive MiniMap & Layout Engine:** Smooth panning, zooming, and instant bird's-eye spatial orientation across complex distributed traces.
-- **Critical Path Highlighting:** Glowing visual accents highlighting the bottleneck path responsible for total run duration.
+- **Workspace Shell 2.0:** 48px application rail, collapsible run sidebar (`⌘B`), persistent panel widths, and responsive geometry.
+- **Dual-Density Nodes:** Auto-switches between Compact (220×48px) and Detailed (320px) cards based on trace graph density.
+- **Decoupled 0ms Layout Engine:** Visual selections, hover highlights, and pin states update with 0ms interaction latency without triggering Dagre recalculations.
+- **Critical Path Highlighting:** Glowing visual accents highlighting the bottleneck dependency chain responsible for total run latency.
 - **Span Pinning (`P`):** Pin key reference spans to keep them highlighted across navigation and filtering.
-- **Real-Time Telemetry Bar:** Instant visibility into aggregate spend ($USD), total prompt/completion tokens, and active WebSocket connections.
 
 ---
 
-## 2. Event & Node Inspector Drawer
+## 2. Event & Node Inspector Drawer 2.0
 > **File:** `02_inspector_drawer.png`
 
-Sliding right-side inspector drawer triggered upon selecting any node or span in the DAG canvas (or via single-key navigation `J`/`K`). Provides comprehensive audit metadata, provenance tracking, OpenTelemetry source attribution, and the interactive Time-Travel Fork & Replay IDE.
+Sliding right-side inspector drawer triggered upon selecting any node or span in the DAG canvas (or via single-key navigation `J`/`K`). Provides comprehensive audit metadata, provenance tracking, OpenTelemetry source attribution, search filter, and the interactive Time-Travel Fork & Replay IDE.
 
 ![Inspector Drawer](02_inspector_drawer.png)
 
 ### Key Capabilities:
+- **Searchable Inspector Tabs:** Overview, Prompts/Messages, Response, Lineage, and Time-Travel Fork IDE.
 - **Git & Environment Provenance:** Displays exact commit hash, branch name, run ID, and span ID.
-- **Telemetry Source Tagging:** Distinguishes native AetherTrace SDK calls, OpenTelemetry OTLP imports, and proxy-intercepted traffic.
-- **Resource Accounting:** Exact latency breakdown (ms), token consumption (prompt vs completion), and calculated API costs.
-- **Child Spans Navigation:** Immediate jump links to downstream tool calls or nested sub-agent executions.
+- **Resource Accounting:** Exact latency breakdown (ms), token consumption (prompt vs completion), and calculated API costs with estimated/reported indicators.
+- **Structured JSON Viewer:** Formatted syntax highlighting with one-click copy actions for prompt payloads and tool call outputs.
 - **Time-Travel Actions:** Dedicated **Replay From Here** and **Fork From Here** triggers to re-run from historical state at \$0.00 cost.
 
 ---
 
-## 3. Waterfall Execution Timeline
+## 3. Waterfall Execution Timeline 2.0
 > **File:** `03_execution_timeline.png`
 
-A synchronized bottom-tray waterfall timeline (`T`) providing microsecond-level timing visibility across distributed multi-agent operations.
+A synchronized bottom-tray waterfall timeline (`T`) providing microsecond-level timing visibility across distributed multi-agent operations with zoom ruler and sticky event columns.
 
 ![Execution Timeline](03_execution_timeline.png)
 
 ### Key Capabilities:
-- **Offset & Duration Visualizer:** Relative horizontal span bars colored by event type (`agent`, `llm`, `tool`, `retry`, `guardrail`).
+- **Zoomable Time Axis Ruler:** Horizontal zoom controls (25% to 400%) with gridlines and offset labels.
+- **Sticky Event Columns:** Left-hand label strip remains fixed during horizontal scrolling.
 - **Critical Path & Latency Bottleneck Isolation:** Pinpoint which tool calls or model generations are slowing down execution.
 - **Bidirectional Highlighting:** Selecting a timeline bar highlights the corresponding node on the DAG canvas and vice-versa.
-- **Pinned Spans Badging:** Pinned spans display prominent visual badges for rapid cross-referencing.
+- **Paused Playhead Indicator:** Amber playhead marker and guideline at the exact timestamp where an execution is held.
 
 ---
 
-## 4. Command Palette (⌘K) & Full-Text Search
+## 4. Raycast-Style Command Palette 2.0 (⌘K)
 > **File:** `04_command_palette_search.png`
 
 Global search and quick-action launcher accessible via `⌘K` or `Ctrl+K`. Powered by local SQLite FTS5 (Full-Text Search) with BM25 ranking for millisecond search over millions of tokens and spans.
@@ -61,97 +62,97 @@ Global search and quick-action launcher accessible via `⌘K` or `Ctrl+K`. Power
 ![Command Palette](04_command_palette_search.png)
 
 ### Key Capabilities:
-- **Semantic Filter Chips:** Fast filtering syntax (`status:error`, `event:tool`, `cost:>0.10`, `duration:>3s`, `model:gpt-4o`, `agent:researcher`).
-- **Instant Search Index:** Search across prompts, completions, tool inputs/outputs, error messages, and agent identifiers.
-- **Workstation Command Actions:** One-keystroke triggering of Diff Arena, Experiment Studio, Evaluation Studio, Chaos Engine, and Breakpoints.
-- **Full Keyboard Navigation:** `↑`/`↓` and `Enter` to jump directly to any span or execute actions.
+- **Semantic Filter Chips:** Quick chips for `status:error`, `event:tool`, `cost:>0.10`, `duration:>3s`, `model:gpt-4o`, `agent:research`.
+- **Contextual Breakpoint Actions:** Automatically surfaces Continue (`Space`), Mock (`M`), and Abort (`Esc`) when a breakpoint is active.
+- **Instant Workspace Switcher:** Quick keys `1` (Debugger), `2` (Diff), `3` (Experiments), `4` (Evaluations).
+- **Full WAI-ARIA Dialog Contract:** `role="dialog"`, `role="combobox"`, `role="listbox"`, `role="option"` with focus restoration.
 
 ---
 
-## 5. Side-by-Side Diff Arena
+## 5. Side-by-Side Diff Arena 2.0
 > **File:** `05_diff_arena.png`
 
-Visual regression comparison tool (`D`) that compares two runs (Baseline vs Target / Fork) side-by-side to highlight cost, latency, and structural execution differences using Needleman-Wunsch sequence alignment.
+Visual regression comparison workspace (`2` or `D`) that compares two runs (Baseline vs Target / Fork) side-by-side to highlight cost, latency, and structural execution differences.
 
 ![Diff Arena](05_diff_arena.png)
 
 ### Key Capabilities:
-- **Executive Delta Scorecard:** Visual comparison of financial spend (`$0.042500 -> $0.002750`, -93.5% savings), wall-clock latency, and token totals.
+- **Executive Delta Scorecard:** Visual comparison of financial spend, wall-clock latency, token totals, and cache reuse percentage.
 - **Reproducibility & Provenance Matching:** Side-by-side diffing of Git branches, commit hashes, lockfiles, and environment runtimes.
 - **Aligned Span Step Diff:** Identifies added, deleted, modified, and unchanged nodes with visual prompt/response diff highlighting.
-- **Diverged Downstream Analysis:** Pinpoints the exact branch point where execution diverged from the baseline.
+- **First-Class Workspace:** Embedded into Workspace Shell 2.0 without modal nesting or layout breakout hacks.
 
 ---
 
-## 6. Live Breakpoint & Interception Rules
+## 6. Live Breakpoint HUD & Interceptor 2.0
 > **File:** `06_breakpoint_interceptor.png`
 
-"Burp Suite for AI Agents" modal (`B`). Configures live WebSocket interception rules to halt running agents mid-flight before upstream LLM calls or tool invocations are executed.
+Real-time human-in-the-loop interception interface. Halts running agents mid-flight before upstream LLM calls or tool invocations are executed.
 
 ![Breakpoint Interceptor](06_breakpoint_interceptor.png)
 
 ### Key Capabilities:
-- **Zero-Eval Conditional Rules:** Safe rule expressions (e.g. `cost > 0.10`, `tool == "bash"`, `agent == "Worker"`) evaluated without risky `eval()`.
-- **Live Connection Suspension:** Holds incoming HTTP sockets suspended in-flight, allowing operators to inspect, mutate prompts, or inject synthetic mock completions.
-- **Granular Filter Scopes:** Target specific agents, model identifiers, or error conditions.
-- **Mock Completion Injection:** Return synthetic responses directly from the debugger at \$0.00 token cost.
+- **Breakpoint HUD Banner:** High-visibility alert banner displaying pause reason, target agent, model, and one-click `[Inspect Span]` link.
+- **Direct Keyboard Actions:** `Space` to Continue, `M` to inject synthetic `$0.00` mock, `Esc` to Abort execution.
+- **Pulsing DAG Node Ring:** Intercepted node exhibits animated amber ring (`ring-1 ring-amber-500/70`) and `PAUSED` pill badge.
+- **Zero-Eval Conditional Rules:** Safe rule expressions (`cost > 0.10`, `tool == "bash"`, `agent == "Worker"`) evaluated without risky `eval()`.
 
 ---
 
-## 7. Chaos Engineering & Fault Injection Console
+## 7. Chaos Engineering Studio
 > **File:** `07_chaos_engineering.png`
 
-Resilience testing console (`C`) to inject synthetic errors and network perturbations into agent execution pipelines to test self-healing loops.
+Fault injection interface (`C`) for stress-testing multi-agent resilience, error boundaries, and recovery behaviors.
 
-![Chaos Engineering Console](07_chaos_engineering.png)
+![Chaos Engineering](07_chaos_engineering.png)
 
 ### Key Capabilities:
-- **Synthetic Fault Types:** Simulate HTTP 429 Rate Limiting, HTTP 500/502 Internal Server Errors, Network Latency delays/jitter, and Corrupted / Malformed JSON payloads.
-- **Adjustable Fault Probability:** Granular percentage slider (0% to 100%) to test probabilistic resilience.
-- **Header-Level Targeting:** Test specific calls on demand via `X-Chaos-Inject: rate_limit` or `corrupt_json`.
-- **Guardrail Audit Trails:** Automatically logs all injected faults as `guardrail_block` spans for debugging analysis.
+- **Latency Spikes:** Inject up to 10,000ms latency delays on specific agent calls.
+- **HTTP 429 Rate Limiting:** Simulate provider rate limits and verify exponential backoff logic.
+- **Token Truncation:** Force context window overflow faults.
+- **Schema Corruption:** Test structured JSON parsing defenses against corrupt outputs.
 
 ---
 
-## 8. Replay & Experiment Studio
+## 8. Experiment Studio 2.0
 > **File:** `08_experiment_studio.png`
 
-Autonomous experimentation workstation (`X`) introduced in **Phase 12**. Turns any existing run into a controlled multi-variant experiment. Operators can create variants, mutate prompts, override tool behaviors, swap models, and replay deterministically.
+Hyperparameter sweep and variant testing workspace (`3` or `X`). Systematically evaluate model variations, prompt iterations, and temperature settings against baseline runs.
 
 ![Experiment Studio](08_experiment_studio.png)
 
 ### Key Capabilities:
-- **Multi-Variant Branching:** Branch multiple execution hypotheses from a single baseline run.
-- **Granular Mutation IDE:** Mutate system prompts, user messages, tool arguments, mock tool responses, or model identifiers (`gpt-4o` ➔ `gpt-4o-mini`).
-- **Flexible Replay Modes:** Execute variants in `cache_only` (100% deterministic, \$0.00), `mock_mutated` (mock upstream, mutate target), or `live_replay` (re-hit upstream providers).
-- **Batch Variant Execution:** Run all variants concurrently with live progress indicators.
+- **Variant Grid:** Matrix comparing model selections, prompt adjustments, and execution status.
+- **Run Lineage Tracking:** Explicitly ties every variant back to its source run and branch point span.
+- **Direct Diff Launch:** One-click transition to Diff Arena to inspect execution divergences.
+- **Embedded Workstation View:** Renders as a dedicated workspace within Workspace Shell 2.0.
 
 ---
 
-## 9. Evaluation & Optimization Studio
+## 9. Evaluation Studio 2.0 & Assertions
 > **File:** `09_evaluation_studio.png`
 
-Deterministic evaluation and optimization engine (`E`) introduced in **Phase 13**. Provides explainable rule assertions, automated root-cause diagnostics, and actionable optimization signals without opaque "AI judges".
+Assertion scoring and evaluation workspace (`4` or `E`). Run deterministic rule checks, regex verifications, and LLM-as-a-judge scoring on agent execution traces.
 
 ![Evaluation Studio](09_evaluation_studio.png)
 
 ### Key Capabilities:
-- **Deterministic Assertion DSL:** Express rules cleanly (`status == completed`, `errors.count == 0`, `retries.count <= 2`, `cost <= $0.10`, `duration <= 5000ms`).
-- **Executive Pass/Fail Scorecard:** Instant verification of assertion compliance with granular pass rates.
-- **Automated Root-Cause Isolation:** Deterministic ranking of primary failure candidates with span attribution.
-- **Actionable Optimization Signals:** Identifies model spend dominance, redundant retry loops, and expensive tool calls with estimated \$ savings.
-- **Exportable Quality Reports:** One-click export to structured JSON or GitHub-flavored Markdown.
+- **Rule-Based & LLM Scoring:** Verify latency ceilings, cost budgets, and required tool sequences.
+- **Pass / Fail Filter Chips:** Quickly isolate failed assertions.
+- **Causal Culprit Span Navigation:** Click `[Culprit Spans]` to jump directly to the failing span in the Debugger workspace with Inspector opened.
+- **Historical Reports:** Track regression trends across benchmark runs over time.
 
 ---
 
-## 10. Multi-Variant Comparison Matrix
+## 10. Replay Lineage & Action Feedback Banner
 > **File:** `10_multi_variant_matrix.png`
 
-Side-by-side scorecard within Experiment Studio comparing all executed variants against the baseline source run.
+Causal lineage tracking and toast feedback notification system for forked and replayed runs.
 
-![Multi-Variant Comparison Matrix](10_multi_variant_matrix.png)
+![Replay Lineage](10_multi_variant_matrix.png)
 
 ### Key Capabilities:
-- **Cross-Variant Scorecard:** Compares status, total cost, cost delta ($ and %), duration, duration delta, and token usage side-by-side.
-- **Visual Delta Indicators:** High-contrast green indicators for cost savings (e.g. `-$0.0450 (-100.0%)`) and latency reductions (e.g. `-180 ms`).
-- **Direct Diff Arena Launch:** One-click `Diff` button on any variant row to open the Side-by-Side Diff Arena directly.
+- **ReplayContextBanner:** Surfaces automatically above the DAG when viewing a forked or replayed execution.
+- **Clickable Source Link:** Direct navigation back to the parent execution (`Source: <parent_run_id>`).
+- **Branch Point Identification:** Identifies the exact span where the replay or fork originated (`branched at span <id>`).
+- **Instant Comparison:** One-click `[Compare with Source]` launches Diff Arena with baseline and target pre-configured.

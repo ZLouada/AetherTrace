@@ -12,16 +12,31 @@ const config: Config = {
     extend: {
       colors: {
         canvas: '#09090b',
-        surface: '#111114',
+        surface: {
+          DEFAULT: '#111114',
+          subtle: '#0c0c0e',
+          elevated: '#18181c',
+          hover: '#222228',
+          active: '#272730'
+        },
         surfaceElevated: '#18181c',
         surfaceHover: '#222228',
         surfaceActive: '#272730',
         borderSubtle: '#202024',
         borderDefault: '#2c2c32',
         borderStrong: '#3f3f48',
-        borderFocus: '#71717a',
+        borderFocus: '#ea580c',
         card: '#111114',
         cardBorder: '#2c2c32',
+        accent: {
+          DEFAULT: '#ea580c',
+          hover: '#f97316',
+          active: '#c2410c',
+          subtle: 'rgba(234, 88, 12, 0.12)',
+          muted: '#9a3412',
+          border: 'rgba(249, 115, 22, 0.35)',
+          contrast: '#ffffff'
+        },
         primary: {
           50: '#fafafa',
           100: '#f4f4f5',
@@ -37,7 +52,19 @@ const config: Config = {
         }
       },
       fontFamily: {
-        mono: ['JetBrains Mono', 'Menlo', 'Monaco', 'Courier New', 'monospace']
+        mono: ['JetBrains Mono', 'Menlo', 'Monaco', 'Courier New', 'monospace'],
+        sans: ['-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', '"Helvetica Neue"', 'Arial', 'sans-serif']
+      },
+      borderRadius: {
+        xs: '2px',
+        sm: '4px',
+        md: '6px',
+        lg: '8px'
+      },
+      transitionDuration: {
+        fast: '100ms',
+        normal: '150ms',
+        slow: '250ms'
       }
     }
   },

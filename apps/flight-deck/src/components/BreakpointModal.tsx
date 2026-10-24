@@ -322,12 +322,12 @@ export const BreakpointModal: React.FC<BreakpointModalProps> = ({
                         </Badge>
                       </div>
                       <div className="text-[10px] text-zinc-400 mt-0.5 flex items-center gap-1">
-                        <code className="text-zinc-200 bg-black/60 px-1 py-0.2 rounded border border-[#202024]">
+                        <code className="text-zinc-200 bg-black/60 px-1.5 py-0.5 rounded border border-[#202024]">
                           {cond.field}
                         </code>
                         <span className="text-zinc-500">{cond.operator}</span>
                         {cond.value !== undefined && (
-                          <code className="text-zinc-200 bg-black/60 px-1 py-0.2 rounded border border-[#202024]">
+                          <code className="text-zinc-200 bg-black/60 px-1.5 py-0.5 rounded border border-[#202024]">
                             {String(cond.value)}
                           </code>
                         )}
@@ -367,7 +367,7 @@ export const BreakpointModal: React.FC<BreakpointModalProps> = ({
                 />
               </div>
               <div>
-                <label className="text-[10px] text-zinc-500 block mb-1">Target Span Type</label>
+                <label className="text-[10px] text-zinc-400 block mb-1">Target Span Type</label>
                 <Select
                   value={condTarget}
                   onChange={(e) => setCondTarget(e.target.value as any)}
@@ -383,7 +383,7 @@ export const BreakpointModal: React.FC<BreakpointModalProps> = ({
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <div>
-                <label className="text-[10px] text-zinc-500 block mb-1">Field Path</label>
+                <label className="text-[10px] text-zinc-400 block mb-1">Field Path</label>
                 <Input
                   placeholder="tool_name, cost_usd, model"
                   value={condField}
@@ -392,7 +392,7 @@ export const BreakpointModal: React.FC<BreakpointModalProps> = ({
                 />
               </div>
               <div>
-                <label className="text-[10px] text-zinc-500 block mb-1">Operator</label>
+                <label className="text-[10px] text-zinc-400 block mb-1">Operator</label>
                 <Select
                   value={condOp}
                   onChange={(e) => setCondOp(e.target.value as any)}
@@ -407,7 +407,7 @@ export const BreakpointModal: React.FC<BreakpointModalProps> = ({
                 </Select>
               </div>
               <div>
-                <label className="text-[10px] text-zinc-500 block mb-1">Value</label>
+                <label className="text-[10px] text-zinc-400 block mb-1">Value</label>
                 <Input
                   placeholder={condOp === 'exists' ? 'N/A' : 'bash, 0.05, true'}
                   value={condValue}

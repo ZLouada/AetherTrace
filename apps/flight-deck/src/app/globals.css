@@ -67,9 +67,15 @@ body {
   stroke-width: 2.5;
 }
 
-/* Accessible focus styling */
+/* Selection styling */
+::selection {
+  background-color: rgba(234, 88, 12, 0.25);
+  color: #ffffff;
+}
+
+/* Accessible focus styling - AetherTrace Orange */
 :focus-visible {
-  outline: 2px solid #71717a !important;
+  outline: 2px solid #ea580c !important;
   outline-offset: 1px !important;
 }
 

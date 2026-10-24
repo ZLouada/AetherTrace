@@ -5,6 +5,38 @@ All notable changes to **AetherTrace** will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-10-24
+
+### Added
+- **Design System 2.0:**
+  - AetherTrace Orange brand accent token (`#ea580c`) codified across Tailwind CSS variables and design tokens.
+  - Standardized pure dark surface hierarchy (`#09090b` canvas, `#111114` sidebars/drawers, `#18181b` cards, `#27272a` borders).
+  - Semantic execution state colors (Success emerald, Running orange, Error red, Intercepted amber, Mocked/Cached cyan, Stalled purple).
+  - Complete elimination of decorative glassmorphism (`backdrop-blur`) and invalid Tailwind utilities (`py-0.2`).
+  - Elevated accessible text contrast (`#a1a1aa` and `#d4d4d8`) meeting WCAG 2.1 AA standards (5.8:1 to 8.9:1).
+  - Accessible focus trapping and restoration in `Modal` and `CommandPalette` components with full ARIA semantics (`role="region"`, `role="treeitem"`, `role="dialog"`).
+- **Workspace Shell & Window Geometry 2.0:**
+  - 48px Application Rail providing single-click routing between primary workspaces: Debugger (`D`), Diff Arena (`F`), Experiments (`E`), and Evaluations (`V`).
+  - Persistent resizable split panes for Run Sidebar and Inspector Drawer with `localStorage` memory and double-click reset.
+  - Collapsible Run Sidebar with keyboard shortcut (`⌘B` / `Ctrl+B`).
+  - Streamlined TopBar featuring active run pill, status badges, metrics summary, and instant quick actions.
+- **Execution DAG & Dual-Density Span Nodes:**
+  - Decoupled Dagre layout engine achieving 0ms selection and hover latency.
+  - Dual-Density nodes: Compact (220×48px single-line pills for 1,000+ span graphs) and Detailed (320px telemetry cards).
+  - Topological single-key span navigation (`J`/`K` or `[`/`]`) and span pinning (`P`).
+  - Visual agent grouping containers (`AgentGroupNode`) and critical path bottleneck highlighting.
+- **Interactive Waterfall Timeline 2.0:**
+  - Calibrated horizontal zoom ruler (25% to 400%) with sticky metadata columns and paused playhead guidelines.
+  - Bidirectional DAG ↔ Timeline synchronization with microsecond timestamp fidelity.
+- **Real-Time Breakpoint Interceptor HUD:**
+  - Floating top-of-screen Breakpoint HUD displaying active paused requests with live hold timer.
+  - Single-key actions: `Space` (Continue/Forward), `M` (Mock at $0.00), `E` (Mutate payload), `Esc` (Abort).
+  - Breakpoint Manager modal (`⌘⇧B`) for conditional trigger configuration.
+- **Unified Studio Workspaces & Command Palette 2.0:**
+  - Side-by-Side Diff Arena with provenance scorecard, token savings calculation, and visual graph deltas.
+  - Experiment Studio and Evaluation Studio upgraded to first-class workspaces with culprit span routing.
+  - Raycast-style Command Palette (`⌘K`) powered by local SQLite FTS5 with BM25 ranking and semantic filter chips.
+
 ---
 
 ## [0.2.0] - 2026-10-22

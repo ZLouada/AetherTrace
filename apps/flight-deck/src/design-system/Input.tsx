@@ -29,8 +29,8 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
 
     const fontClass = variant === 'mono' ? 'font-mono' : 'font-sans';
     const borderClass = hasError
-      ? 'border-rose-600 focus:border-rose-500'
-      : 'border-[#2c2c32] focus:border-[#71717a]';
+      ? 'border-rose-600 focus:border-rose-500 focus:ring-rose-500/30'
+      : 'border-[#2c2c32] focus:border-accent/70 focus:ring-accent/40';
 
     return (
       <div className={`relative flex items-center w-full ${disabled ? 'opacity-50' : ''}`}>
@@ -44,7 +44,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
           disabled={disabled}
           className={`w-full bg-[#111114] text-zinc-200 placeholder-zinc-500 rounded border ${borderClass} ${fontClass} ${sizeClasses} ${
             icon ? 'pl-8' : ''
-          } outline-none transition-colors focus:ring-1 focus:ring-zinc-600 ${className}`}
+          } outline-none transition-colors duration-fast focus:ring-1 ${className}`}
           {...props}
         />
       </div>

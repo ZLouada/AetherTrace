@@ -13,6 +13,7 @@ import {
   History,
   BarChart3,
   ArrowRight,
+  ArrowLeft,
   Scale,
   RefreshCw,
   AlertTriangle,
@@ -69,7 +70,9 @@ interface ExperimentStudioProps {
   runs: TraceRun[];
   selectedRunId: string | null;
   onSelectRun: (runId: string) => void;
+  onSelectSpan?: (spanId: string, runId?: string) => void;
   onOpenDiffModal: (baseId: string, targetId: string) => void;
+  embedded?: boolean;
 }
 
 export const ExperimentStudio: React.FC<ExperimentStudioProps> = ({
@@ -78,7 +81,9 @@ export const ExperimentStudio: React.FC<ExperimentStudioProps> = ({
   runs,
   selectedRunId,
   onSelectRun,
-  onOpenDiffModal
+  onSelectSpan,
+  onOpenDiffModal,
+  embedded = false
 }) => {
   // Navigation / View Tabs
   const [activeTab, setActiveTab] = useState<'variants' | 'matrix' | 'history'>('variants');
@@ -355,15 +360,10 @@ export const ExperimentStudio: React.FC<ExperimentStudioProps> = ({
 
   const sourceRun = runs.find((r) => r.id === activeExperiment?.source_run_id) || null;
 
-  return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      title="Experiment Studio — Replay, Mutate & Evaluate"
-      maxWidth="5xl"
-    >
-      <div className="flex flex-col h-[750px] -m-6 bg-[#09090b] text-zinc-100 font-mono text-xs overflow-hidden">
-        {/* Subheader: Top bar with tabs and experiment switcher */}
+  const contentBody = (
+    <>
+      <div className={`flex flex-col ${embedded ? 'flex-1 h-full' : 'h-[80vh] w-full'} bg-[#09090b] text-zinc-100 font-mono text-xs overflow-hidden`}>
+      {/* Subheader: Top bar with tabs and experiment switcher */}
         <div className="h-12 border-b border-[#202024] bg-[#111114] px-4 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
@@ -564,11 +564,17 @@ export const ExperimentStudio: React.FC<ExperimentStudioProps> = ({
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  onSelectRun(v.replay_run_id!);
+                                  if (onSelectSpan && v.fork_span_id) {
+                                    onSelectSpan(v.fork_span_id, v.replay_run_id!);
+                                  } else {
+                                    onSelectRun(v.replay_run_id!);
+                                  }
+                                  onClose();
                                 }}
-                                className="text-emerald-400 hover:underline flex items-center gap-0.5"
+                                className="text-[#ea580c] hover:underline flex items-center gap-0.5"
+                                title="Inspect this variant run in Debugger"
                               >
-                                View DAG <ChevronRight className="w-2.5 h-2.5" />
+                                Inspect in Debugger <ChevronRight className="w-2.5 h-2.5" />
                               </button>
                             </div>
                           ) : (
@@ -728,25 +734,25 @@ export const ExperimentStudio: React.FC<ExperimentStudioProps> = ({
                     {/* Source Run & Variant Metrics Strip */}
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                       <div className="bg-[#121216] border border-[#202024] p-3 rounded">
-                        <span className="text-zinc-500 text-[10px] block uppercase">Source Run</span>
+                        <span className="text-zinc-400 text-[10px] block uppercase">Source Run</span>
                         <span className="font-semibold text-zinc-200 text-xs">
                           {sourceRun ? sourceRun.name : activeVariant.source_run_id.slice(0, 12)}
                         </span>
                       </div>
                       <div className="bg-[#121216] border border-[#202024] p-3 rounded">
-                        <span className="text-zinc-500 text-[10px] block uppercase">Replay Run ID</span>
+                        <span className="text-zinc-400 text-[10px] block uppercase">Replay Run ID</span>
                         <span className="font-semibold text-zinc-200 text-xs">
                           {activeVariant.replay_run_id ? activeVariant.replay_run_id.slice(0, 12) + '...' : '—'}
                         </span>
                       </div>
                       <div className="bg-[#121216] border border-[#202024] p-3 rounded">
-                        <span className="text-zinc-500 text-[10px] block uppercase">Fork Span</span>
+                        <span className="text-zinc-400 text-[10px] block uppercase">Fork Span</span>
                         <span className="font-semibold text-zinc-200 text-xs">
                           {activeVariant.fork_span_id ? activeVariant.fork_span_id.slice(0, 12) + '...' : 'Root'}
                         </span>
                       </div>
                       <div className="bg-[#121216] border border-[#202024] p-3 rounded">
-                        <span className="text-zinc-500 text-[10px] block uppercase">Completed</span>
+                        <span className="text-zinc-400 text-[10px] block uppercase">Completed</span>
                         <span className="font-semibold text-zinc-200 text-xs">
                           {activeVariant.completed_at
                             ? new Date(activeVariant.completed_at).toLocaleTimeString()
@@ -1014,19 +1020,41 @@ export const ExperimentStudio: React.FC<ExperimentStudioProps> = ({
                                 </span>
                               </td>
                               <td className="p-3 text-right">
-                                {sc.replayRunId && activeExperiment?.source_run_id && (
-                                  <Button
-                                    variant="secondary"
-                                    size="xs"
-                                    onClick={() => {
-                                      onOpenDiffModal(activeExperiment.source_run_id, sc.replayRunId!);
-                                      onClose();
-                                    }}
-                                    icon={<Scale className="w-3 h-3" />}
-                                  >
-                                    Diff
-                                  </Button>
-                                )}
+                                <div className="flex items-center justify-end gap-1.5">
+                                  {sc.replayRunId && (
+                                    <Button
+                                      variant="ghost"
+                                      size="xs"
+                                      onClick={() => {
+                                        const forkSpanId = activeExperiment?.variants.find((v) => v.id === sc.variantId)?.fork_span_id;
+                                        if (onSelectSpan && forkSpanId) {
+                                          onSelectSpan(forkSpanId, sc.replayRunId || undefined);
+                                        } else if (sc.replayRunId) {
+                                          onSelectRun(sc.replayRunId);
+                                        }
+                                        onClose();
+                                      }}
+                                      icon={<ArrowRight className="w-3 h-3" />}
+                                      title="Inspect variant run in Debugger"
+                                    >
+                                      Inspect
+                                    </Button>
+                                  )}
+                                  {sc.replayRunId && activeExperiment?.source_run_id && (
+                                    <Button
+                                      variant="secondary"
+                                      size="xs"
+                                      onClick={() => {
+                                        onOpenDiffModal(activeExperiment.source_run_id, sc.replayRunId!);
+                                        onClose();
+                                      }}
+                                      icon={<Scale className="w-3 h-3" />}
+                                      title="Compare against base run in Diff Arena"
+                                    >
+                                      Diff
+                                    </Button>
+                                  )}
+                                </div>
                               </td>
                             </tr>
                           );
@@ -1097,8 +1125,9 @@ export const ExperimentStudio: React.FC<ExperimentStudioProps> = ({
                               onSelectRun(item.replayRunId);
                               onClose();
                             }}
+                            icon={<ArrowRight className="w-3 h-3" />}
                           >
-                            Open Run
+                            Inspect in Debugger
                           </Button>
                         </div>
                       </div>
@@ -1150,6 +1179,67 @@ export const ExperimentStudio: React.FC<ExperimentStudioProps> = ({
           </div>
         </Modal>
       )}
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <div className="flex flex-col h-full w-full bg-[#09090b] text-zinc-100 font-sans text-xs overflow-hidden">
+        {/* Studio Workspace Header */}
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-[#202024] bg-[#09090b] shrink-0 font-mono">
+          <div className="flex items-center gap-3">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={onClose}
+              icon={<ArrowLeft className="w-3.5 h-3.5" />}
+              title="Return to Debugger workspace (Esc)"
+            >
+              Back to Debugger
+            </Button>
+            <div className="h-4 w-[1px] bg-[#27272a]" />
+            <div className="flex items-center gap-2">
+              <FlaskConical className="w-4 h-4 text-[#ea580c]" />
+              <span className="font-semibold text-sm text-zinc-100 uppercase tracking-wide">
+                Experiment Studio
+              </span>
+              <Badge variant="neutral" size="xs">
+                MUTATION LAB
+              </Badge>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 font-mono text-xs">
+            {activeExperiment && (
+              <span className="text-zinc-400 text-[11px] hidden sm:inline">
+                {activeExperiment.name} ({activeExperiment.variants.length} variant{activeExperiment.variants.length !== 1 ? 's' : ''})
+              </span>
+            )}
+            <Badge variant="outline" size="xs">
+              ESC TO EXIT
+            </Badge>
+          </div>
+        </div>
+        {contentBody}
+      </div>
+    );
+  }
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={
+        <div className="flex items-center gap-2 font-mono">
+          <FlaskConical className="w-4 h-4 text-[#ea580c]" />
+          <span>Experiment Studio</span>
+          <Badge variant="neutral" size="xs">MUTATION LAB</Badge>
+        </div>
+      }
+      subtitle="Replay, mutate prompts and parameters, and evaluate batch variants"
+      maxWidth="5xl"
+    >
+      {contentBody}
     </Modal>
   );
 };

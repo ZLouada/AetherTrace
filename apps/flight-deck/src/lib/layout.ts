@@ -4,11 +4,14 @@ import type { TraceSpan, AgentSummary } from '@/lib/api';
 
 export const NODE_WIDTH = 320;
 export const NODE_HEIGHT = 175;
-export const GROUP_NODE_WIDTH = 340;
-export const GROUP_NODE_HEIGHT = 160;
+export const COMPACT_NODE_WIDTH = 220;
+export const COMPACT_NODE_HEIGHT = 48;
+export const GROUP_NODE_WIDTH = 320;
+export const GROUP_NODE_HEIGHT = 150;
 
 export interface LayoutOptions {
   direction?: 'TB' | 'LR';
+  density?: 'compact' | 'detailed';
   criticalPathSpanIds?: Set<string>;
   isCriticalPathFocused?: boolean;
   collapsedAgentNames?: Set<string>;
@@ -16,6 +19,7 @@ export interface LayoutOptions {
   onExpandAgent?: (agentName: string) => void;
   pinnedSpanIds?: Set<string>;
   selectedSpanIds?: Set<string>;
+  hoveredSpanId?: string | null;
 }
 
 export function getLayoutedElements(
@@ -33,19 +37,25 @@ export function getLayoutedElements(
       : options || { direction: 'TB' };
 
   const direction = opts.direction || 'TB';
+  const density = opts.density || 'detailed';
+  const isCompact = density === 'compact';
   const criticalPathSpanIds = opts.criticalPathSpanIds;
   const isCriticalPathFocused = Boolean(opts.isCriticalPathFocused);
   const collapsedAgentNames = opts.collapsedAgentNames || new Set<string>();
   const agentSummaries = opts.agentSummaries || new Map<string, AgentSummary>();
   const pinnedSpanIds = opts.pinnedSpanIds;
   const selectedSpanIds = opts.selectedSpanIds;
+  const hoveredSpanId = opts.hoveredSpanId;
+
+  const nodeWidth = isCompact ? COMPACT_NODE_WIDTH : NODE_WIDTH;
+  const nodeHeight = isCompact ? COMPACT_NODE_HEIGHT : NODE_HEIGHT;
 
   const dagreGraph = new dagre.graphlib.Graph();
   dagreGraph.setDefaultEdgeLabel(() => ({}));
   dagreGraph.setGraph({
     rankdir: direction,
-    ranksep: 70,
-    nodesep: 50,
+    ranksep: isCompact ? 50 : 70,
+    nodesep: isCompact ? 30 : 50,
     marginx: 40,
     marginy: 40
   });
@@ -87,6 +97,7 @@ export function getLayoutedElements(
           data: {
             agent: summary,
             isSelected: false,
+            isHovered: false,
             onExpand: opts.onExpandAgent
           },
           position: { x: 0, y: 0 }
@@ -104,7 +115,9 @@ export function getLayoutedElements(
           isMultiSelected: Boolean(selectedSpanIds && selectedSpanIds.has(s.id)),
           isPinned: Boolean(pinnedSpanIds && pinnedSpanIds.has(s.id)),
           isCriticalPath: criticalPathSpanIds?.has(s.id),
-          isSubdued: isCriticalPathFocused && !criticalPathSpanIds?.has(s.id)
+          isSubdued: isCriticalPathFocused && !criticalPathSpanIds?.has(s.id),
+          isHovered: Boolean(hoveredSpanId && s.id === hoveredSpanId),
+          density
         },
         position: { x: 0, y: 0 }
       });
@@ -159,7 +172,7 @@ export function getLayoutedElements(
     let opacity = 1.0;
 
     if (e.isCritical) {
-      stroke = '#f59e0b';
+      stroke = '#ea580c';
       strokeWidth = 3;
     } else if (isCriticalPathFocused) {
       stroke = '#27272a';
@@ -183,8 +196,8 @@ export function getLayoutedElements(
 
   nodes.forEach((node) => {
     const isGroup = node.type === 'agentGroupNode';
-    const w = isGroup ? GROUP_NODE_WIDTH : NODE_WIDTH;
-    const h = isGroup ? GROUP_NODE_HEIGHT : NODE_HEIGHT;
+    const w = isGroup ? GROUP_NODE_WIDTH : nodeWidth;
+    const h = isGroup ? GROUP_NODE_HEIGHT : nodeHeight;
     dagreGraph.setNode(node.id, { width: w, height: h });
   });
 
@@ -197,8 +210,8 @@ export function getLayoutedElements(
   const layoutedNodes: Node[] = nodes.map((node) => {
     const pos = dagreGraph.node(node.id);
     const isGroup = node.type === 'agentGroupNode';
-    const w = isGroup ? GROUP_NODE_WIDTH : NODE_WIDTH;
-    const h = isGroup ? GROUP_NODE_HEIGHT : NODE_HEIGHT;
+    const w = isGroup ? GROUP_NODE_WIDTH : nodeWidth;
+    const h = isGroup ? GROUP_NODE_HEIGHT : nodeHeight;
     return {
       ...node,
       position: {

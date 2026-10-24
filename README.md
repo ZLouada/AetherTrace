@@ -14,7 +14,7 @@
 **A local-first visual debugger, high-speed reverse proxy, and time-travel replay engine for multi-agent architectures.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
-[![Release: v0.2.0](https://img.shields.io/badge/Release-v0.2.0-blue.svg)](./CHANGELOG.md)
+[![Release: v0.3.0](https://img.shields.io/badge/Release-v0.3.0-orange.svg)](docs/releases/v0.3.0-features.md)
 [![GitHub Repository](https://img.shields.io/badge/GitHub-ZLouada%2FAetherTrace-blue?logo=github)](https://github.com/ZLouada/AetherTrace)
 [![TypeScript: 5.x](https://img.shields.io/badge/TypeScript-5.x-3178C6.svg)](https://www.typescriptlang.org/)
 [![Turborepo](https://img.shields.io/badge/Monorepo-Turborepo-EF4444.svg)](https://turbo.build/)
@@ -23,6 +23,7 @@
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](./CONTRIBUTING.md)
 
 [Quickstart](#-quickstart-in-30-seconds) •
+[v0.3.0 Features](docs/releases/v0.3.0-features.md) •
 [Screenshots](#-visual-tour--ui-screenshots) •
 [Documentation](#-documentation) •
 [Step-by-Step Guide](#-step-by-step-guide) •
@@ -47,7 +48,7 @@ Building multi-agent workflows (with LangChain, AutoGen, CrewAI, or raw OpenAI/A
 
 ---
 
-## ⚡ The Solution: AetherTrace v0.2.0
+## ⚡ The Solution: AetherTrace v0.3.0
 
 AetherTrace is an open-source, 100% local-first telemetry and optimization workstation:
 

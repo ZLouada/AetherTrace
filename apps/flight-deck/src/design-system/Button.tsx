@@ -4,7 +4,7 @@ import React, { forwardRef } from 'react';
 import { Loader2 } from 'lucide-react';
 
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'outline';
+  variant?: 'primary' | 'secondary' | 'tertiary' | 'ghost' | 'danger' | 'destructive' | 'outline' | 'accent';
   size?: 'xs' | 'sm' | 'md';
   isLoading?: boolean;
   icon?: React.ReactNode;
@@ -25,7 +25,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     ref
   ) => {
     const baseClasses =
-      'inline-flex items-center justify-center font-mono font-medium rounded transition-colors select-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-400 disabled:opacity-50 disabled:cursor-not-allowed';
+      'inline-flex items-center justify-center font-sans font-medium rounded transition-colors duration-fast select-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-50 disabled:cursor-not-allowed';
 
     const sizeClasses = {
       xs: 'px-1.5 py-0.5 text-[10px] gap-1',
@@ -35,13 +35,19 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
 
     const variantClasses = {
       primary:
-        'bg-white text-black hover:bg-zinc-200 active:bg-zinc-300 font-semibold shadow-sm',
+        'bg-white text-black hover:bg-zinc-200 active:bg-zinc-300 font-semibold shadow-xs',
+      accent:
+        'bg-accent text-white hover:bg-accent-hover active:bg-accent-active border border-accent-border font-semibold shadow-xs',
       secondary:
         'bg-[#18181c] text-zinc-200 hover:bg-[#222228] hover:text-white border border-[#2c2c32] active:bg-[#272730]',
       ghost:
         'bg-transparent text-zinc-400 hover:text-white hover:bg-[#18181c] border border-transparent',
+      tertiary:
+        'bg-transparent text-zinc-400 hover:text-white hover:bg-[#18181c] border border-transparent',
       danger:
-        'bg-rose-950 text-rose-200 hover:bg-rose-900 border border-rose-800 active:bg-rose-900',
+        'bg-rose-950/70 text-rose-200 hover:bg-rose-900 border border-rose-800 active:bg-rose-900',
+      destructive:
+        'bg-rose-950/70 text-rose-200 hover:bg-rose-900 border border-rose-800 active:bg-rose-900',
       outline:
         'bg-transparent text-zinc-300 hover:text-white hover:bg-[#18181c] border border-[#2c2c32]'
     }[variant];

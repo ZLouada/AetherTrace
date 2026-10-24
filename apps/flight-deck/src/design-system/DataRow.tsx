@@ -2,7 +2,6 @@
 
 import React, { useState } from 'react';
 import { Copy, Check } from 'lucide-react';
-import { IconButton } from './IconButton';
 
 export interface DataRowProps {
   label: string;
@@ -31,7 +30,7 @@ export const DataRow: React.FC<DataRowProps> = ({
   };
 
   return (
-    <div className={`flex items-center justify-between py-1 px-1.5 rounded hover:bg-[#18181c] transition-colors text-xs font-mono group ${className}`}>
+    <div className={`flex items-center justify-between py-1 px-1.5 rounded hover:bg-[#18181c] transition-colors duration-fast text-xs font-mono group ${className}`}>
       <span className="text-zinc-400 shrink-0 select-none mr-2">{label}</span>
       <div className="flex items-center gap-1.5 min-w-0 justify-end">
         <span className="text-zinc-200 truncate select-text">{value}</span>
@@ -39,7 +38,8 @@ export const DataRow: React.FC<DataRowProps> = ({
           <button
             onClick={handleCopy}
             title={`Copy ${label}`}
-            className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white transition-opacity"
+            aria-label={`Copy ${label}`}
+            className="opacity-0 group-hover:opacity-100 focus:opacity-100 p-0.5 rounded text-zinc-400 hover:text-white transition-opacity focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
           >
             {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
           </button>

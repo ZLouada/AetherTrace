@@ -24,7 +24,11 @@ import {
   Pin,
   Maximize2,
   ArrowUpRight,
-  ChevronRight
+  ChevronRight,
+  Sparkles,
+  Ban,
+  Copy,
+  Check
 } from 'lucide-react';
 import {
   searchTraces,
@@ -32,7 +36,9 @@ import {
   type TraceRun,
   type TraceSpan,
   type SearchResult,
-  type SavedSearch
+  type SavedSearch,
+  type PendingBreakpoint,
+  type BreakpointResolution
 } from '@/lib/api';
 import {
   Badge,
@@ -50,6 +56,7 @@ interface CommandPaletteProps {
   selectedSpan: TraceSpan | null;
   onSelectSpan: (span: TraceSpan) => void;
   onSelectSearchResult?: (result: SearchResult) => void;
+  onSelectView?: (view: 'debugger' | 'diff' | 'experiments' | 'evaluations') => void;
   onPauseRun: () => void;
   onResumeRun: () => void;
   onReplaySpan: () => void;
@@ -70,16 +77,22 @@ interface CommandPaletteProps {
   onNavigateParent?: () => void;
   onNavigateChild?: () => void;
   onClearFilters?: () => void;
+  pendingBreakpoints?: PendingBreakpoint[];
+  onResolveBreakpoint?: (spanId: string, resolution: BreakpointResolution) => Promise<void>;
+  isPinned?: boolean;
+  onCopyText?: (text: string, label: string) => void;
+  onDeselectSpan?: () => void;
 }
 
 interface PaletteItem {
   id: string;
-  category: 'Actions' | 'Errors' | 'Tools' | 'Spans' | 'Runs' | 'Saved Searches';
+  category: 'Breakpoint Actions' | 'Navigation' | 'Debugger & Canvas' | 'Span Actions' | 'Execution & Tools' | 'Runs' | 'Errors' | 'Tools' | 'Spans' | 'Saved Searches';
   label: string;
   detail?: string;
   snippet?: string;
   badge?: string;
   badgeCategory?: 'LLM' | 'TOOL' | 'ERROR' | 'HTTP' | 'AGENT';
+  shortcut?: string;
   icon: any;
   run: () => void;
 }
@@ -94,6 +107,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   selectedSpan,
   onSelectSpan,
   onSelectSearchResult,
+  onSelectView,
   onPauseRun,
   onResumeRun,
   onReplaySpan,
@@ -113,7 +127,12 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   onFitGraphView,
   onNavigateParent,
   onNavigateChild,
-  onClearFilters
+  onClearFilters,
+  pendingBreakpoints,
+  onResolveBreakpoint,
+  isPinned,
+  onCopyText,
+  onDeselectSpan
 }: CommandPaletteProps) => {
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -122,9 +141,11 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   const [isSearching, setIsSearching] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const previousActiveElement = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (isOpen) {
+      previousActiveElement.current = document.activeElement as HTMLElement;
       setQuery('');
       setSelectedIndex(0);
       setRemoteResults([]);
@@ -132,8 +153,20 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         .then((res) => setSavedSearches(res.savedSearches || []))
         .catch(() => {});
       setTimeout(() => inputRef.current?.focus(), 50);
+    } else if (previousActiveElement.current) {
+      previousActiveElement.current.focus?.();
+      previousActiveElement.current = null;
     }
   }, [isOpen]);
+
+  // Clean up focus restoration on unmount
+  useEffect(() => {
+    return () => {
+      if (previousActiveElement.current) {
+        previousActiveElement.current.focus?.();
+      }
+    };
+  }, []);
 
   // Debounced Remote Search
   useEffect(() => {
@@ -172,205 +205,216 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     const q = query.toLowerCase().trim();
     const resultItems: PaletteItem[] = [];
 
-    // 1. Actions Category
     const isCommandMode = q.startsWith('>');
     const filterTerm = isCommandMode ? q.slice(1).trim() : q;
 
-    const actionList: PaletteItem[] = [];
-
-    if (!q || isCommandMode || 'pause resume execution'.includes(filterTerm)) {
-      if (activeRun?.status === 'running') {
-        actionList.push({
-          id: 'action-pause',
-          category: 'Actions',
-          label: 'Pause Execution',
-          detail: 'Halt current active run',
-          icon: Pause,
-          run: onPauseRun
-        });
-      } else {
-        actionList.push({
-          id: 'action-resume',
-          category: 'Actions',
-          label: 'Resume Execution',
-          detail: 'Resume paused run',
+    // 0. Breakpoint Actions (when pending breakpoints exist or run is paused)
+    const breakpointList: PaletteItem[] = [];
+    if (pendingBreakpoints && pendingBreakpoints.length > 0) {
+      const activeBp = pendingBreakpoints[0];
+      if (onResolveBreakpoint) {
+        breakpointList.push({
+          id: 'action-bp-continue',
+          category: 'Breakpoint Actions',
+          label: `Continue Execution (${activeBp.agentName})`,
+          detail: `Resume held ${activeBp.spanType || 'span'} ${activeBp.spanId.slice(0, 8)}`,
+          shortcut: 'Space',
           icon: Play,
-          run: onResumeRun
+          run: () => onResolveBreakpoint(activeBp.spanId, { action: 'resume' })
+        });
+        breakpointList.push({
+          id: 'action-bp-mock',
+          category: 'Breakpoint Actions',
+          label: `Mock Response ($0.00 Cost)`,
+          detail: `Inject synthetic response for ${activeBp.agentName}`,
+          shortcut: 'M',
+          icon: Sparkles,
+          run: () => onResolveBreakpoint(activeBp.spanId, { action: 'mock', mockedResponse: '{"status":"mocked","result":"Synthetic response"}' })
+        });
+        breakpointList.push({
+          id: 'action-bp-abort',
+          category: 'Breakpoint Actions',
+          label: `Abort Execution`,
+          detail: `Terminate held ${activeBp.agentName} span immediately`,
+          shortcut: 'Esc',
+          icon: Ban,
+          run: () => onResolveBreakpoint(activeBp.spanId, { action: 'abort' })
         });
       }
     }
 
+    // 1. Navigation Category
+    const navigationList: PaletteItem[] = [
+      {
+        id: 'nav-debugger',
+        category: 'Navigation',
+        label: 'Switch to Debugger Workspace',
+        detail: 'DAG Canvas, Waterfall Timeline, Inspector',
+        shortcut: '1',
+        icon: Bot,
+        run: () => {
+          if (onSelectView) onSelectView('debugger');
+        }
+      },
+      {
+        id: 'nav-diff',
+        category: 'Navigation',
+        label: 'Switch to Diff Arena',
+        detail: 'Side-by-side model & prompt comparison',
+        shortcut: '2',
+        icon: Scale,
+        run: () => {
+          if (onSelectView) onSelectView('diff');
+          else onOpenDiffModal();
+        }
+      },
+      {
+        id: 'nav-experiments',
+        category: 'Navigation',
+        label: 'Switch to Experiment Studio',
+        detail: 'Replay variants, prompt mutations & batch matrix',
+        shortcut: '3',
+        icon: FlaskConical,
+        run: () => {
+          if (onSelectView) onSelectView('experiments');
+          else onOpenExperimentStudio?.();
+        }
+      },
+      {
+        id: 'nav-evaluations',
+        category: 'Navigation',
+        label: 'Switch to Evaluation Studio',
+        detail: 'Deterministic assertions & root cause analysis',
+        shortcut: '4',
+        icon: Target,
+        run: () => {
+          if (onSelectView) onSelectView('evaluations');
+          else onOpenEvaluationPanel?.();
+        }
+      }
+    ];
+
+    // 2. Span Actions (when a span is selected)
+    const spanActionList: PaletteItem[] = [];
     if (selectedSpan) {
-      if (!q || isCommandMode || 'replay from here'.includes(filterTerm)) {
-        actionList.push({
-          id: 'action-replay',
-          category: 'Actions',
-          label: `Replay From ${selectedSpan.agent_name}`,
-          detail: `Cached prefix up to span ${selectedSpan.id.slice(0, 8)}`,
-          icon: RotateCcw,
-          run: onReplaySpan
-        });
-      }
-
-      if (!q || isCommandMode || 'fork time-travel branch'.includes(filterTerm)) {
-        actionList.push({
-          id: 'action-fork',
-          category: 'Actions',
-          label: `Fork From ${selectedSpan.agent_name}`,
-          detail: `Branch new execution at span ${selectedSpan.id.slice(0, 8)}`,
-          icon: GitFork,
-          run: onForkSpan
-        });
-      }
-
-      if (onTogglePinSpan && (!q || isCommandMode || 'pin unpin span'.includes(filterTerm))) {
-        actionList.push({
+      if (onTogglePinSpan) {
+        spanActionList.push({
           id: 'action-pin-span',
-          category: 'Actions',
-          label: `Pin / Unpin Span (${selectedSpan.agent_name})`,
-          detail: 'Toggle pinned state in workspace (P)',
+          category: 'Span Actions',
+          label: isPinned ? `Unpin Span (${selectedSpan.agent_name})` : `Pin Span as Reference (${selectedSpan.agent_name})`,
+          detail: isPinned ? 'Remove pin marker from workspace' : 'Pin span to persist reference marker in DAG and Timeline',
+          shortcut: 'P',
           icon: Pin,
           run: () => onTogglePinSpan(selectedSpan.id)
         });
       }
 
-      if (selectedSpan.parent_span_id && onNavigateParent && (!q || isCommandMode || 'parent jump navigate'.includes(filterTerm))) {
-        actionList.push({
+      spanActionList.push({
+        id: 'action-inspect-span',
+        category: 'Span Actions',
+        label: `Inspect Span (${selectedSpan.agent_name})`,
+        detail: `Open inspector for ${selectedSpan.model || selectedSpan.span_type} span`,
+        shortcut: 'I',
+        icon: Bot,
+        run: () => onSelectSpan(selectedSpan)
+      });
+
+      if (onCopyText) {
+        spanActionList.push({
+          id: 'action-copy-span-id',
+          category: 'Span Actions',
+          label: `Copy Span ID (${selectedSpan.id.slice(0, 8)})`,
+          detail: 'Copy full unique span ID to clipboard',
+          icon: Copy,
+          run: () => onCopyText(selectedSpan.id, 'Span ID')
+        });
+      }
+
+      spanActionList.push({
+        id: 'action-replay',
+        category: 'Span Actions',
+        label: `Replay From ${selectedSpan.agent_name}`,
+        detail: `Cached prefix up to span ${selectedSpan.id.slice(0, 8)}`,
+        shortcut: 'T',
+        icon: RotateCcw,
+        run: onReplaySpan
+      });
+
+      spanActionList.push({
+        id: 'action-fork',
+        category: 'Span Actions',
+        label: `Fork From ${selectedSpan.agent_name}`,
+        detail: `Branch new execution at span ${selectedSpan.id.slice(0, 8)}`,
+        icon: GitFork,
+        run: onForkSpan
+      });
+
+      if (selectedSpan.parent_span_id && onNavigateParent) {
+        spanActionList.push({
           id: 'action-navigate-parent',
-          category: 'Actions',
+          category: 'Span Actions',
           label: 'Navigate to Parent Span',
-          detail: `Jump to ancestor ${selectedSpan.parent_span_id.slice(0, 8)} ([)`,
+          detail: `Jump to ancestor ${selectedSpan.parent_span_id.slice(0, 8)}`,
+          shortcut: '[',
           icon: ArrowUpRight,
           run: onNavigateParent
         });
       }
 
-      if (onNavigateChild && (!q || isCommandMode || 'child jump navigate'.includes(filterTerm))) {
-        actionList.push({
+      if (onNavigateChild) {
+        spanActionList.push({
           id: 'action-navigate-child',
-          category: 'Actions',
+          category: 'Span Actions',
           label: 'Navigate to First Child Span',
-          detail: 'Jump to child execution (])',
+          detail: 'Jump to child execution',
+          shortcut: ']',
           icon: ChevronRight,
           run: onNavigateChild
         });
       }
+
+      if (onDeselectSpan) {
+        spanActionList.push({
+          id: 'action-deselect-span',
+          category: 'Span Actions',
+          label: 'Deselect Span (Close Inspector)',
+          detail: 'Clear current span selection',
+          shortcut: 'Esc',
+          icon: X,
+          run: onDeselectSpan
+        });
+      }
     }
 
-    if (onFitGraphView && (!q || isCommandMode || 'fit graph view screen center'.includes(filterTerm))) {
-      actionList.push({
+    // 3. Debugger & Canvas Category
+    const debuggerList: PaletteItem[] = [
+      {
+        id: 'action-timeline',
+        category: 'Debugger & Canvas',
+        label: 'Toggle Execution Timeline',
+        detail: 'View waterfall timing chart',
+        shortcut: 'T',
+        icon: Clock,
+        run: onToggleTimeline
+      }
+    ];
+
+    if (onFitGraphView) {
+      debuggerList.push({
         id: 'action-fit-view',
-        category: 'Actions',
+        category: 'Debugger & Canvas',
         label: 'Fit Graph View to Screen',
-        detail: 'Center and auto-fit entire execution DAG (G)',
+        detail: 'Center and auto-fit entire execution DAG',
+        shortcut: 'G',
         icon: Maximize2,
         run: onFitGraphView
       });
     }
 
-    if (onClearFilters && (!q || isCommandMode || 'clear filter reset all'.includes(filterTerm))) {
-      actionList.push({
-        id: 'action-clear-filters',
-        category: 'Actions',
-        label: 'Clear All Graph Filters',
-        detail: 'Reset DAG and timeline to show all spans',
-        icon: X,
-        run: onClearFilters
-      });
-    }
-
-    if (onSelectFilter && (!q || isCommandMode || 'filter pinned'.includes(filterTerm))) {
-      actionList.push({
-        id: 'action-filter-pinned',
-        category: 'Actions',
-        label: 'Filter: Pinned Spans Only',
-        detail: 'Only display pinned reference spans in DAG',
-        icon: Pin,
-        run: () => onSelectFilter('pinned')
-      });
-    }
-
-    if (!q || isCommandMode || 'timeline waterfall'.includes(filterTerm)) {
-      actionList.push({
-        id: 'action-timeline',
-        category: 'Actions',
-        label: 'Toggle Execution Timeline',
-        detail: 'View waterfall timing chart (T)',
-        icon: Clock,
-        run: onToggleTimeline
-      });
-    }
-
-    if (!q || isCommandMode || 'breakpoints intercept'.includes(filterTerm)) {
-      actionList.push({
-        id: 'action-breakpoints',
-        category: 'Actions',
-        label: 'Toggle Breakpoints Interception',
-        detail: 'Pause outbound LLM calls mid-flight (B)',
-        icon: Sliders,
-        run: onToggleBreakpoints
-      });
-    }
-
-    if (!q || isCommandMode || 'diff arena compare runs'.includes(filterTerm)) {
-      actionList.push({
-        id: 'action-diff',
-        category: 'Actions',
-        label: 'Open Run Diff Arena',
-        detail: 'Side-by-side model & prompt comparison (D)',
-        icon: Scale,
-        run: onOpenDiffModal
-      });
-    }
-
-    if (!q || isCommandMode || 'chaos engineering faults'.includes(filterTerm)) {
-      actionList.push({
-        id: 'action-chaos',
-        category: 'Actions',
-        label: 'Open Chaos Engineering Engine',
-        detail: 'Inject 429 rate limits, 500s, or latencies (C)',
-        icon: FlaskConical,
-        run: onOpenChaosModal
-      });
-    }
-
-    if (onOpenExperimentStudio && (!q || isCommandMode || 'experiment studio replay mutate variants'.includes(filterTerm))) {
-      actionList.push({
-        id: 'action-experiment-studio',
-        category: 'Actions',
-        label: 'Open Replay & Experiment Studio',
-        detail: 'Configure variants, mutate prompts, and batch replay (X)',
-        icon: FlaskConical,
-        run: onOpenExperimentStudio
-      });
-    }
-
-    if (onOpenEvaluationPanel && (!q || isCommandMode || 'evaluate evaluation assertions root cause optimize metrics'.includes(filterTerm))) {
-      actionList.push({
-        id: 'action-evaluation-studio',
-        category: 'Actions',
-        label: 'Open Evaluation & Optimization Studio',
-        detail: 'Run deterministic assertions, inspect root causes, and view optimization signals (E)',
-        icon: Target,
-        run: onOpenEvaluationPanel
-      });
-    }
-
-    if (!q || isCommandMode || 'export trace bundle pcap'.includes(filterTerm)) {
-      actionList.push({
-        id: 'action-export',
-        category: 'Actions',
-        label: 'Export Trace (.trace.json)',
-        detail: 'Download portable execution bundle',
-        icon: Download,
-        run: onExportTrace
-      });
-    }
-
-    if (onToggleCriticalPathFocus && (!q || isCommandMode || 'critical path focus bottleneck'.includes(filterTerm))) {
-      actionList.push({
+    if (onToggleCriticalPathFocus) {
+      debuggerList.push({
         id: 'action-critical-path',
-        category: 'Actions',
+        category: 'Debugger & Canvas',
         label: 'Toggle Critical Path Focus',
         detail: 'Highlight DAG bottleneck and subdue non-critical nodes',
         icon: Zap,
@@ -378,10 +422,10 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       });
     }
 
-    if (onCollapseAllAgents && (!q || isCommandMode || 'collapse all agents'.includes(filterTerm))) {
-      actionList.push({
+    if (onCollapseAllAgents) {
+      debuggerList.push({
         id: 'action-collapse-agents',
-        category: 'Actions',
+        category: 'Debugger & Canvas',
         label: 'Collapse All Agents',
         detail: 'Group spans by agent boundaries in DAG',
         icon: Layers,
@@ -389,10 +433,10 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       });
     }
 
-    if (onExpandAllAgents && (!q || isCommandMode || 'expand all agents'.includes(filterTerm))) {
-      actionList.push({
+    if (onExpandAllAgents) {
+      debuggerList.push({
         id: 'action-expand-agents',
-        category: 'Actions',
+        category: 'Debugger & Canvas',
         label: 'Expand All Agents',
         detail: 'Show all individual spans in DAG',
         icon: Layers,
@@ -400,21 +444,26 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       });
     }
 
-    if (onSelectFilter && (!q || isCommandMode || 'filter errors error failures'.includes(filterTerm))) {
-      actionList.push({
+    if (onSelectFilter) {
+      debuggerList.push({
+        id: 'action-filter-pinned',
+        category: 'Debugger & Canvas',
+        label: 'Filter: Pinned Spans Only',
+        detail: 'Only display pinned reference spans in DAG',
+        icon: Pin,
+        run: () => onSelectFilter('pinned')
+      });
+      debuggerList.push({
         id: 'action-filter-errors',
-        category: 'Actions',
+        category: 'Debugger & Canvas',
         label: 'Filter: Errors & Retries Only',
         detail: 'Only display failing spans and retry attempts',
         icon: AlertTriangle,
         run: () => onSelectFilter('errors')
       });
-    }
-
-    if (onSelectFilter && (!q || isCommandMode || 'filter tools tool'.includes(filterTerm))) {
-      actionList.push({
+      debuggerList.push({
         id: 'action-filter-tools',
-        category: 'Actions',
+        category: 'Debugger & Canvas',
         label: 'Filter: Tools Only',
         detail: 'Only display tool execution spans',
         icon: Wrench,
@@ -422,11 +471,130 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       });
     }
 
-    if (isCommandMode) {
-      return actionList.filter((a) => !filterTerm || a.label.toLowerCase().includes(filterTerm));
+    if (onClearFilters) {
+      debuggerList.push({
+        id: 'action-clear-filters',
+        category: 'Debugger & Canvas',
+        label: 'Clear All Graph Filters',
+        detail: 'Reset DAG and timeline to show all spans',
+        icon: X,
+        run: onClearFilters
+      });
     }
 
-    // 2. Saved Searches (shown on empty query)
+    // 4. Execution & Tools Category
+    const executionList: PaletteItem[] = [];
+    if (activeRun?.status === 'running') {
+      executionList.push({
+        id: 'action-pause',
+        category: 'Execution & Tools',
+        label: 'Pause Execution',
+        detail: 'Halt current active run',
+        shortcut: 'Space',
+        icon: Pause,
+        run: onPauseRun
+      });
+    } else {
+      executionList.push({
+        id: 'action-resume',
+        category: 'Execution & Tools',
+        label: 'Resume Execution',
+        detail: 'Resume paused run',
+        shortcut: 'Space',
+        icon: Play,
+        run: onResumeRun
+      });
+    }
+
+    if (selectedRunId && onCopyText) {
+      executionList.push({
+        id: 'action-copy-run-id',
+        category: 'Execution & Tools',
+        label: `Copy Run ID (${selectedRunId.slice(0, 8)})`,
+        detail: 'Copy active run ID to clipboard',
+        icon: Copy,
+        run: () => onCopyText(selectedRunId, 'Run ID')
+      });
+    }
+
+    if (activeRun?.parent_run_id) {
+      executionList.push({
+        id: 'action-nav-source-run',
+        category: 'Execution & Tools',
+        label: `Navigate to Source Run (${activeRun.parent_run_id.slice(0, 8)})`,
+        detail: 'Open original ancestor execution in Debugger',
+        icon: ArrowUpRight,
+        run: () => onSelectRun(activeRun.parent_run_id!)
+      });
+
+      executionList.push({
+        id: 'action-diff-source-run',
+        category: 'Execution & Tools',
+        label: `Compare with Source in Diff Arena`,
+        detail: 'Compare ancestor baseline with this run',
+        icon: Scale,
+        run: () => onOpenDiffModal()
+      });
+    }
+
+    executionList.push({
+      id: 'action-breakpoints',
+      category: 'Execution & Tools',
+      label: 'Toggle Breakpoints Interception',
+      detail: 'Pause outbound LLM calls mid-flight',
+      shortcut: 'B',
+      icon: Sliders,
+      run: onToggleBreakpoints
+    });
+
+    executionList.push({
+      id: 'action-chaos',
+      category: 'Execution & Tools',
+      label: 'Open Chaos Engineering Engine',
+      detail: 'Inject 429 rate limits, 500s, or latencies',
+      shortcut: 'C',
+      icon: FlaskConical,
+      run: onOpenChaosModal
+    });
+
+    executionList.push({
+      id: 'action-export',
+      category: 'Execution & Tools',
+      label: 'Export Trace (.trace.json)',
+      detail: 'Download portable execution bundle',
+      icon: Download,
+      run: onExportTrace
+    });
+
+    const matchesFilter = (item: PaletteItem) => {
+      if (!filterTerm) return true;
+      return (
+        item.label.toLowerCase().includes(filterTerm) ||
+        (item.detail && item.detail.toLowerCase().includes(filterTerm)) ||
+        (item.shortcut && item.shortcut.toLowerCase() === filterTerm) ||
+        item.category.toLowerCase().includes(filterTerm)
+      );
+    };
+
+    const filteredBreakpoints = breakpointList.filter(matchesFilter);
+    const filteredNav = navigationList.filter(matchesFilter);
+    const filteredSpanActions = spanActionList.filter(matchesFilter);
+    const filteredDebugger = debuggerList.filter(matchesFilter);
+    const filteredExecution = executionList.filter(matchesFilter);
+
+    const allActions = [
+      ...filteredBreakpoints,
+      ...filteredNav,
+      ...filteredSpanActions,
+      ...filteredDebugger,
+      ...filteredExecution
+    ];
+
+    if (isCommandMode) {
+      return allActions;
+    }
+
+    // 5. Saved Searches (shown on empty query)
     if (!q && savedSearches.length > 0) {
       for (const s of savedSearches) {
         resultItems.push({
@@ -440,7 +608,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       }
     }
 
-    // 3. Remote Server Search Results
+    // 6. Remote Server Search Results
     if (remoteResults.length > 0) {
       for (const res of remoteResults) {
         let cat: PaletteItem['category'] = 'Spans';
@@ -501,7 +669,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     }
 
     // Combine Actions and Results
-    return [...actionList, ...resultItems];
+    return [...allActions, ...resultItems];
   }, [
     query,
     remoteResults,
@@ -517,10 +685,28 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     onToggleBreakpoints,
     onOpenDiffModal,
     onOpenChaosModal,
+    onOpenExperimentStudio,
+    onOpenEvaluationPanel,
     onExportTrace,
     onSelectSpan,
     onSelectRun,
-    onSelectSearchResult
+    onSelectSearchResult,
+    onSelectView,
+    onTogglePinSpan,
+    onFitGraphView,
+    onNavigateParent,
+    onNavigateChild,
+    onClearFilters,
+    onSelectFilter,
+    onToggleCriticalPathFocus,
+    onCollapseAllAgents,
+    onExpandAllAgents,
+    pendingBreakpoints,
+    onResolveBreakpoint,
+    isPinned,
+    onCopyText,
+    onDeselectSpan,
+    selectedRunId
   ]);
 
   // Keyboard navigation inside palette
@@ -561,7 +747,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-50 bg-black/75 backdrop-blur-[2px] flex items-start justify-center pt-16 p-4 animate-in fade-in duration-100"
+      aria-label="Command Palette"
+      className="fixed inset-0 z-50 bg-black/80 flex items-start justify-center pt-16 p-4 animate-in fade-in duration-fast"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -573,6 +760,11 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           <input
             ref={inputRef}
             type="text"
+            role="combobox"
+            aria-autocomplete="list"
+            aria-expanded={isOpen}
+            aria-controls="command-palette-results"
+            aria-activedescendant={items[selectedIndex] ? `item-${items[selectedIndex].id}` : undefined}
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
@@ -580,7 +772,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
             }}
             onKeyDown={handleKeyDown}
             placeholder="Search runs, spans, errors, tools, models (e.g. status:error, cost:>0.10, or >action)..."
-            className="w-full bg-transparent text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none"
+            className="w-full bg-transparent text-xs text-zinc-100 placeholder-zinc-400 focus:outline-none"
           />
           {isSearching && (
             <span className="text-[10px] text-zinc-400 mr-2 shrink-0 animate-pulse">
@@ -594,7 +786,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
 
         {/* Semantic Filter Quick Chips */}
         <div className="flex items-center gap-1.5 px-3 py-1.5 bg-[#141418] border-b border-[#202024] overflow-x-auto select-none">
-          <span className="text-[10px] text-zinc-500 mr-1 shrink-0">Filters:</span>
+          <span className="text-[10px] text-zinc-400 mr-1 shrink-0 font-medium">Filters:</span>
           <button
             onClick={() => setFilterTag('status:error')}
             className="px-2 py-0.5 rounded text-[10px] font-medium bg-rose-950/60 text-rose-300 border border-rose-900/60 hover:bg-rose-900/60 transition-colors shrink-0"
@@ -634,71 +826,95 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         </div>
 
         {/* Results List */}
-        <div className="max-h-96 overflow-y-auto p-1.5 space-y-0.5">
+        <div
+          id="command-palette-results"
+          role="listbox"
+          aria-label="Commands and search results"
+          className="max-h-96 overflow-y-auto p-1.5 space-y-0.5"
+        >
           {items.length === 0 ? (
             <EmptyState
               title="No matching results found"
-              description="Try searching by error message, tool name, agent, or remove filter predicates."
+              description="Try searching by command, shortcut, error, tool, or agent."
               className="py-10"
             />
           ) : (
             items.map((item, idx) => {
               const isSelected = idx === selectedIndex;
               const Icon = item.icon;
+              const prevCategory = idx > 0 ? items[idx - 1].category : null;
+              const showCategoryHeader = item.category !== prevCategory;
 
               return (
-                <div
-                  key={item.id}
-                  onClick={() => {
-                    item.run();
-                    onClose();
-                  }}
-                  className={`flex flex-col px-2.5 py-2 rounded cursor-pointer transition-colors ${
-                    isSelected
-                      ? 'bg-[#18181c] text-white border border-[#3f3f48]'
-                      : 'text-zinc-300 hover:bg-[#141418] border border-transparent'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2.5 min-w-0">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <Icon className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
-                      <span className="font-medium truncate text-zinc-100">{item.label}</span>
-                      {item.badge && (
-                        <Badge
-                          variant={item.badgeCategory ? 'category' : 'neutral'}
-                          category={item.badgeCategory}
-                          size="xs"
-                        >
-                          {item.badge}
-                        </Badge>
-                      )}
-                    </div>
-                    {item.detail && (
-                      <span className="text-[10px] text-zinc-500 shrink-0 truncate max-w-[240px]">
-                        {item.detail}
-                      </span>
-                    )}
-                  </div>
-                  {item.snippet && (
-                    <div className="mt-0.5 pl-5 text-[10px] text-zinc-400 truncate">
-                      &quot;{item.snippet}&quot;
+                <React.Fragment key={item.id}>
+                  {showCategoryHeader && (
+                    <div className="pt-2.5 pb-1 px-2.5 text-[10px] font-bold uppercase tracking-wider text-zinc-400">
+                      {item.category}
                     </div>
                   )}
-                </div>
+                  <div
+                    id={`item-${item.id}`}
+                    role="option"
+                    aria-selected={isSelected}
+                    onClick={() => {
+                      item.run();
+                      onClose();
+                    }}
+                    className={`flex flex-col px-2.5 py-1.5 rounded cursor-pointer transition-colors ${
+                      isSelected
+                        ? 'bg-[#18181c] text-white border border-[#3f3f48]'
+                        : 'text-zinc-300 hover:bg-[#141418] border border-transparent'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2.5 min-w-0">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Icon className="w-3.5 h-3.5 text-zinc-400 shrink-0" />
+                        <span className="font-medium truncate text-zinc-100">{item.label}</span>
+                        {item.badge && (
+                          <Badge
+                            variant={item.badgeCategory ? 'category' : 'neutral'}
+                            category={item.badgeCategory}
+                            size="xs"
+                          >
+                            {item.badge}
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {item.detail && (
+                          <span className="text-[10px] text-zinc-400 truncate max-w-[240px]">
+                            {item.detail}
+                          </span>
+                        )}
+                        {item.shortcut && (
+                          <kbd className="px-1.5 py-0.5 rounded bg-[#18181c] text-zinc-300 border border-[#2c2c32] text-[10px] font-mono">
+                            {item.shortcut}
+                          </kbd>
+                        )}
+                      </div>
+                    </div>
+                    {item.snippet && (
+                      <div className="mt-0.5 pl-5 text-[10px] text-zinc-400 truncate">
+                        &quot;{item.snippet}&quot;
+                      </div>
+                    )}
+                  </div>
+                </React.Fragment>
               );
             })
           )}
         </div>
 
         {/* Footer info & shortcut hints */}
-        <div className="px-3.5 py-2 border-t border-[#202024] bg-[#09090b] flex items-center justify-between text-[10px] text-zinc-500">
+        <div className="px-3.5 py-2 border-t border-[#202024] bg-[#09090b] flex items-center justify-between text-[10px] text-zinc-400">
           <div className="flex items-center gap-2.5">
-            <span><kbd className="px-1 py-0.2 rounded bg-[#18181c] text-zinc-300 border border-[#2c2c32]">↑↓</kbd> Navigate</span>
-            <span><kbd className="px-1 py-0.2 rounded bg-[#18181c] text-zinc-300 border border-[#2c2c32]">↵</kbd> Select</span>
-            <span><kbd className="px-1 py-0.2 rounded bg-[#18181c] text-zinc-300 border border-[#2c2c32]">Esc</kbd> Close</span>
-            <span><kbd className="px-1 py-0.2 rounded bg-[#18181c] text-zinc-300 border border-[#2c2c32]">&gt;</kbd> Actions</span>
+            <span><kbd className="px-1.5 py-0.5 rounded bg-[#18181c] text-zinc-300 border border-[#2c2c32]">↑↓</kbd> Navigate</span>
+            <span><kbd className="px-1.5 py-0.5 rounded bg-[#18181c] text-zinc-300 border border-[#2c2c32]">↵</kbd> Select</span>
+            <span><kbd className="px-1.5 py-0.5 rounded bg-[#18181c] text-zinc-300 border border-[#2c2c32]">Esc</kbd> Close</span>
+            <span><kbd className="px-1.5 py-0.5 rounded bg-[#18181c] text-zinc-300 border border-[#2c2c32]">1-4</kbd> Switch View</span>
+            <span><kbd className="px-1.5 py-0.5 rounded bg-[#18181c] text-zinc-300 border border-[#2c2c32]">&gt;</kbd> Actions</span>
           </div>
-          <span className="text-zinc-400 font-medium">AetherTrace ⌘K</span>
+          <span className="text-zinc-300 font-medium font-mono">AetherTrace ⌘K</span>
         </div>
       </div>
     </div>

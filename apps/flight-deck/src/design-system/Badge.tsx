@@ -4,7 +4,7 @@ import React from 'react';
 import { TOKENS, getCategoryStyle, getStatusStyle } from './tokens';
 
 export interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
-  variant?: 'neutral' | 'category' | 'status' | 'origin' | 'outline';
+  variant?: 'neutral' | 'category' | 'status' | 'origin' | 'outline' | 'accent';
   category?: string;
   status?: string;
   origin?: keyof typeof TOKENS.origins;
@@ -24,13 +24,15 @@ export const Badge: React.FC<BadgeProps> = ({
   ...props
 }) => {
   const sizeClasses = {
-    xs: 'px-1.5 py-0.2 text-[10px] gap-1',
+    xs: 'px-1.5 py-0.5 text-[10px] gap-1',
     sm: 'px-2 py-0.5 text-xs gap-1.5'
   }[size];
 
   let styleClasses = 'bg-[#18181c] text-zinc-300 border border-[#2c2c32]';
 
-  if (variant === 'category' && category) {
+  if (variant === 'accent') {
+    styleClasses = 'bg-accent/15 text-orange-200 border border-accent/40';
+  } else if (variant === 'category' && category) {
     const s = getCategoryStyle(category);
     return (
       <span
@@ -42,9 +44,7 @@ export const Badge: React.FC<BadgeProps> = ({
         <span className="truncate">{children || category.toUpperCase()}</span>
       </span>
     );
-  }
-
-  if (variant === 'status' && status) {
+  } else if (variant === 'status' && status) {
     const s = getStatusStyle(status);
     return (
       <span
@@ -56,9 +56,7 @@ export const Badge: React.FC<BadgeProps> = ({
         <span className="truncate">{children || status.toUpperCase()}</span>
       </span>
     );
-  }
-
-  if (variant === 'origin' && origin && TOKENS.origins[origin]) {
+  } else if (variant === 'origin' && origin && TOKENS.origins[origin]) {
     const o = TOKENS.origins[origin];
     return (
       <span
@@ -70,9 +68,7 @@ export const Badge: React.FC<BadgeProps> = ({
         <span className="truncate">{children || origin.replace('_', ' ').toUpperCase()}</span>
       </span>
     );
-  }
-
-  if (variant === 'outline') {
+  } else if (variant === 'outline') {
     styleClasses = 'bg-transparent text-zinc-400 border border-[#2c2c32]';
   }
 
