@@ -156,3 +156,16 @@ Causal lineage tracking and toast feedback notification system for forked and re
 - **Clickable Source Link:** Direct navigation back to the parent execution (`Source: <parent_run_id>`).
 - **Branch Point Identification:** Identifies the exact span where the replay or fork originated (`branched at span <id>`).
 - **Instant Comparison:** One-click `[Compare with Source]` launches Diff Arena with baseline and target pre-configured.
+
+---
+
+## 11. Responsive Workstation Viewports (Clean Solid Canvas)
+> **Directory:** `cleanup/`
+
+Visual verification of the workstation across standard developer display geometries following the removal of background dot/grid patterns and logo banner chrome:
+
+- **1920 × 1080 (Desktop / Workstation)**: [`cleanup/viewport_1920x1080.png`](cleanup/viewport_1920x1080.png) — Full 4-pane layout, centered execution context, clean pitch-black canvas.
+- **1440 × 900 (MacBook Pro 15")**: [`cleanup/viewport_1440x900.png`](cleanup/viewport_1440x900.png) — Proportional DAG spacing and responsive TopBar action strip.
+- **1280 × 800 (MacBook Air 13")**: [`cleanup/viewport_1280x800.png`](cleanup/viewport_1280x800.png) — Resizable run sidebar and floating DAG controls without clipping.
+- **1024 × 768 (Compact / Tablet)**: [`cleanup/viewport_1024x768.png`](cleanup/viewport_1024x768.png) — Compact mode with zero horizontal overflow, responsive metrics, and accessible controls.
+

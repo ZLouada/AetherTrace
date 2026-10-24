@@ -3,14 +3,12 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   ReactFlow,
-  Background,
   Controls,
   MiniMap,
   useNodesState,
   useEdgesState,
   useReactFlow,
-  ReactFlowProvider,
-  BackgroundVariant
+  ReactFlowProvider
 } from '@xyflow/react';
 import { SpanNode } from './nodes/SpanNode';
 import { AgentGroupNode } from './nodes/AgentGroupNode';
@@ -452,7 +450,6 @@ function InnerDagCanvas({
         maxZoom={2.0}
         proOptions={{ hideAttribution: true }}
       >
-        <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#27272a" />
         <Controls position="bottom-left" showInteractive={false} />
         <MiniMap
           nodeColor={(node: any) => {

@@ -95,7 +95,7 @@ export const TopBar: React.FC<TopBarProps> = ({
 
   return (
     <header className="h-12 border-b border-[#202024] bg-[#09090b] px-3 flex items-center justify-between shrink-0 select-none z-30">
-      {/* Zone 1 — Identity */}
+      {/* Zone 1 — Workspace & Navigation Identity */}
       <div className="flex items-center gap-2.5 shrink-0">
         {onToggleSidebar && (
           <Tooltip content={isSidebarCollapsed ? 'Expand sidebar (⌘B)' : 'Collapse sidebar (⌘B)'}>
@@ -113,21 +113,17 @@ export const TopBar: React.FC<TopBarProps> = ({
           </Tooltip>
         )}
 
-        <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded bg-[#18181c] border border-[#2c2c32] flex items-center justify-center">
-            <Activity className="w-3.5 h-3.5 text-[#ea580c]" />
-          </div>
-          <div className="flex items-center gap-1.5 font-mono">
-            <span className="font-bold text-xs tracking-tight text-white">AETHERTRACE</span>
-            <Badge variant="neutral" size="xs">
-              DEBUGGER
-            </Badge>
-          </div>
+        <div className="flex items-center gap-1.5 font-mono">
+          <Activity className="w-3.5 h-3.5 text-[#ea580c] shrink-0" />
+          <span className="font-bold text-xs tracking-tight text-white">AETHERTRACE</span>
+          <Badge variant="neutral" size="xs">
+            DEBUGGER
+          </Badge>
         </div>
       </div>
 
-      {/* Zone 2 — Context (Breadcrumb & Run Metrics) */}
-      <div className="hidden md:flex items-center gap-2 font-mono text-xs text-zinc-400 min-w-0 px-3">
+      {/* Zone 2 — Context (Breadcrumb & Run Metrics — Centered) */}
+      <div className="hidden md:flex flex-1 items-center justify-center gap-2 font-mono text-xs text-zinc-400 min-w-0 px-3">
         <span className="text-zinc-400 shrink-0">Runs</span>
         <span className="text-zinc-500 shrink-0">/</span>
 
@@ -136,7 +132,7 @@ export const TopBar: React.FC<TopBarProps> = ({
             <StatusIndicator status={selectedRun.status} size="xs" />
 
             <span
-              className="text-zinc-100 font-medium truncate max-w-[140px] lg:max-w-[220px]"
+              className="text-zinc-100 font-medium truncate max-w-[140px] lg:max-w-[240px]"
               title={selectedRun.name}
             >
               {selectedRun.name}
@@ -162,12 +158,12 @@ export const TopBar: React.FC<TopBarProps> = ({
               </span>
             )}
 
-            <span className="text-zinc-500">·</span>
-            <span className="text-zinc-300 text-[11px] shrink-0">
+            <span className="text-zinc-500 hidden xl:inline">·</span>
+            <span className="text-zinc-300 text-[11px] shrink-0 hidden xl:inline">
               {selectedRun.total_tokens.toLocaleString()} tok
             </span>
-            <span className="text-zinc-500">·</span>
-            <span className="text-zinc-200 font-semibold text-[11px] shrink-0">
+            <span className="text-zinc-500 hidden xl:inline">·</span>
+            <span className="text-zinc-200 font-semibold text-[11px] shrink-0 hidden xl:inline">
               ${selectedRun.total_cost_usd > 0 ? selectedRun.total_cost_usd.toFixed(4) : '0.0000'}
             </span>
           </div>
@@ -176,8 +172,8 @@ export const TopBar: React.FC<TopBarProps> = ({
         )}
       </div>
 
-      {/* Zone 3 — Actions (Contextual Only) */}
-      <div className="flex items-center gap-1.5 font-mono">
+      {/* Zone 3 — Actions & Utilities */}
+      <div className="flex items-center gap-2 font-mono shrink-0">
         {/* Pause / Resume Controls if run is active */}
         {selectedRun?.status === 'running' && onPauseRun && (
           <Button
@@ -239,10 +235,6 @@ export const TopBar: React.FC<TopBarProps> = ({
         >
           <span className="hidden md:inline">Simulate Run</span>
         </Button>
-      </div>
-
-      {/* Zone 4 — Utilities (Search, File Sync, Connection) */}
-      <div className="flex items-center gap-2 font-mono">
         {/* Hidden File Input for .trace.json Import */}
         <input
           type="file"
@@ -288,7 +280,7 @@ export const TopBar: React.FC<TopBarProps> = ({
           title="Open Command Palette (Cmd+K)"
         >
           <Command className="w-3 h-3 text-zinc-400" />
-          <span className="hidden sm:inline">Search...</span>
+          <span className="hidden lg:inline">Search...</span>
           <kbd className="px-1.5 py-0.5 rounded bg-[#18181c] text-[10px] text-zinc-300 border border-[#2c2c32]">
             ⌘K
           </kbd>

@@ -668,5 +668,15 @@ Performance scaling benchmarks verified via automated test script (`scripts/step
 - **10,000 Spans**: Compact layout: ~23.4s | Detailed layout: ~24.2s (10,000 nodes, 9,999 edges).
 - **Decoupled Visual Mutations**: Hovering, selecting, multi-selecting, or pinning nodes triggers zero Dagre recalculation and 0ms layout latency.
 
+### 16.8 Visual Surface Cleanup & Chrome Simplification
+- **Zero Canvas Patterns (Dots / Grids Removed)**: The repeated SVG dot/grid background (`<Background variant={BackgroundVariant.Dots}>`) has been removed from `DagCanvas.tsx`. The debugger canvas and all related workspaces now render on a completely clean, solid dark surface (`#09090b`).
+- **Minimap Purity**: The Minimap retains its clean overview without inheriting or rendering any decorative grids or dot textures.
+- **TopBar Chrome Discipline**: The decorative boxed logo container (`w-6 h-6 rounded bg-[#18181c] border border-[#2c2c32]`) has been removed from the application chrome. It is replaced by a clean, restrained direct icon (`Activity` in `#ea580c`) paired with the compact identity (`AETHERTRACE DEBUGGER`).
+- **Tri-Zone TopBar Architecture**:
+  - **Left**: Workspace & Navigation Identity (`[Sidebar Toggle] [Icon] AETHERTRACE DEBUGGER`).
+  - **Center**: Centered execution context (`Runs / [Status] [Run Name] [Badges] · Tokens · Cost`).
+  - **Right**: Actions & Utilities (Timeline, Inspector, Simulate Run, Trace Sync, ⌘K Search, Server Status).
+
+
 
 
